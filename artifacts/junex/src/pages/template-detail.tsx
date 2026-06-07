@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+﻿import { useState, useEffect } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,14 +8,22 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useGetTemplate, useCreateDeployment } from "@workspace/api-client-react";
-import { PaymentModal } from "@/components/payment-modal";
 import {
-  Loader2, Github, ArrowLeft, Bot, ExternalLink, Zap, Lock,
-  KeyRound, Tag, CreditCard, CheckCircle2, Gift,
+  Loader2, Github, ArrowLeft, Bot, Zap, Lock,
+  KeyRound, CreditCard, CheckCircle2, Gift, Wallet, AlertCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const API_BASE = "http://localhost:8080";
+
+function fmt(amount: number, currency = "KES") {
+  return `${currency} ${(amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
+
+function authHeader() {
+  const token = localStorage.getItem("junex_token");
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+}
 
 export default function TemplateDetail() {
   const params = useParams<{ id: string }>();
@@ -26,15 +34,23 @@ export default function TemplateDetail() {
   const { data: template, isLoading } = useGetTemplate(id);
   const [botName, setBotName] = useState("");
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
-  const [showPayment, setShowPayment] = useState(false);
-  const [paid, setPaid] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [checkingBalance, setCheckingBalance] = useState(false);
 
-  const token = localStorage.getItem("junex_token");
+  useEffect(() => {
+    if (!template || template.isFree) return;
+    setCheckingBalance(true);
+    fetch(`${API_BASE}/api/wallet`, { headers: authHeader() })
+      .then(r => r.json())
+      .then(d => setWalletBalance(d.balance ?? 0))
+      .catch(() => setWalletBalance(0))
+      .finally(() => setCheckingBalance(false));
+  }, [template]);
 
   const createMutation = useCreateDeployment({
     mutation: {
       onSuccess: (data) => {
-        toast({ title: "Deployment started successfully" });
+        toast({ title: "Deployment started!" });
         setLocation(`/deployments/${data.id}`);
       },
       onError: (error: any) => {
@@ -54,14 +70,33 @@ export default function TemplateDetail() {
     return true;
   }
 
-  function handleDeploy(e: React.FormEvent) {
+  async function handleDeploy(e: React.FormEvent) {
     e.preventDefault();
     if (!validateForm()) return;
-    if (!paid && !template?.isFree) { setShowPayment(true); return; }
-    submitDeployment();
-  }
 
-  function submitDeployment() {
+    if (!template?.isFree) {
+      // Deduct from wallet
+      const deductRes = await fetch(`${API_BASE}/api/wallet/deduct`, {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({ templateId: id, description: `Deployed: ${template?.name}` }),
+      });
+      const deductData = await deductRes.json();
+      if (!deductRes.ok) {
+        if (deductRes.status === 402) {
+          toast({
+            title: "Insufficient balance",
+            description: `You need ${fmt(deductData.required)} but have ${fmt(deductData.balance)}. Top up your wallet.`,
+            variant: "destructive",
+          });
+          return;
+        }
+        toast({ title: deductData.error ?? "Payment failed", variant: "destructive" });
+        return;
+      }
+      setWalletBalance(deductData.newBalance);
+    }
+
     createMutation.mutate({ data: { templateId: id, botName: botName.trim(), envVars } });
   }
 
@@ -90,9 +125,10 @@ export default function TemplateDetail() {
     (template.appJson?.env as Record<string, { description?: string; required?: boolean }>) ?? {}
   );
 
-  const priceDisplay = template.isFree
-    ? "Free"
-    : `${template.currency} ${((template.price ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+  const price = template.price ?? 0;
+  const currency = template.currency ?? "KES";
+  const hasEnoughBalance = template.isFree || (walletBalance !== null && walletBalance >= price);
+  const shortfall = walletBalance !== null ? Math.max(0, price - walletBalance) : 0;
 
   return (
     <Layout>
@@ -116,12 +152,7 @@ export default function TemplateDetail() {
                 </Badge>
               ) : (
                 <Badge className="bg-primary/15 text-primary border-primary/20 gap-1">
-                  <CreditCard className="h-3 w-3" /> {priceDisplay}
-                </Badge>
-              )}
-              {paid && !template.isFree && (
-                <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Paid
+                  <CreditCard className="h-3 w-3" /> {fmt(price, currency)}
                 </Badge>
               )}
             </div>
@@ -138,6 +169,40 @@ export default function TemplateDetail() {
         </div>
 
         <Separator className="mb-6" />
+
+        {/* Balance check */}
+        {!template.isFree && (
+          <Card className={`mb-6 border ${hasEnoughBalance ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+            <CardContent className="p-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                {checkingBalance ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                ) : hasEnoughBalance ? (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0" />
+                )}
+                <div>
+                  <p className="text-sm font-medium">
+                    {checkingBalance ? "Checking balance..." : hasEnoughBalance
+                      ? "Sufficient balance"
+                      : "Insufficient balance"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Wallet: {walletBalance !== null ? fmt(walletBalance, currency) : "..."} &nbsp;|&nbsp;
+                    Required: {fmt(price, currency)}
+                    {!hasEnoughBalance && shortfall > 0 && ` (need ${fmt(shortfall, currency)} more)`}
+                  </p>
+                </div>
+              </div>
+              {!hasEnoughBalance && (
+                <Button size="sm" className="gap-2 flex-shrink-0" asChild>
+                  <Link href="/wallet"><Wallet className="h-4 w-4" /> Top Up</Link>
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Deploy form */}
         <form onSubmit={handleDeploy} className="space-y-6">
@@ -192,49 +257,21 @@ export default function TemplateDetail() {
             </CardContent>
           </Card>
 
-          {/* Payment status */}
-          {!template.isFree && !paid && (
-            <div className="flex items-center gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
-              <Lock className="h-5 w-5 text-amber-500 flex-shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">Payment required to deploy</p>
-                <p className="text-xs text-muted-foreground">
-                  This bot costs <strong>{priceDisplay}</strong>. You'll be prompted to pay before deploying.
-                </p>
-              </div>
-            </div>
-          )}
-          {(template.isFree || paid) && (
-            <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5">
-              <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
-              <p className="text-sm font-medium">
-                {template.isFree ? "Free template â€” ready to deploy!" : "Payment confirmed â€” ready to deploy!"}
-              </p>
-            </div>
-          )}
-
-          <Button type="submit" className="w-full gap-2" size="lg" disabled={createMutation.isPending}>
+          <Button
+            type="submit"
+            className="w-full gap-2"
+            size="lg"
+            disabled={createMutation.isPending || (!template.isFree && !hasEnoughBalance)}
+          >
             {createMutation.isPending ? (
               <><Loader2 className="h-4 w-4 animate-spin" /> Deploying...</>
-            ) : !paid && !template.isFree ? (
-              <><CreditCard className="h-4 w-4" /> Pay & Deploy â€” {priceDisplay}</>
+            ) : !template.isFree && !hasEnoughBalance ? (
+              <><Lock className="h-4 w-4" /> Insufficient Balance</>
             ) : (
-              <><Zap className="h-4 w-4" /> Deploy Bot</>
+              <><Zap className="h-4 w-4" /> Deploy Bot {!template.isFree && `- ${fmt(price, currency)}`}</>
             )}
           </Button>
         </form>
-
-        {/* Payment Modal */}
-        <PaymentModal
-          open={showPayment}
-          onOpenChange={setShowPayment}
-          onPaymentSuccess={() => { setPaid(true); setShowPayment(false); setTimeout(submitDeployment, 500); }}
-          templateId={id}
-          templateName={template.name}
-          price={template.price ?? 0}
-          currency={template.currency ?? "KES"}
-          isFree={template.isFree ?? false}
-        />
       </div>
     </Layout>
   );

@@ -1,4 +1,4 @@
-﻿import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -65,7 +65,7 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="system" storageKey="junex-theme">
+      <ThemeProvider defaultTheme="dark" storageKey="junex-theme">
         <AuthProvider>
           <TooltipProvider>
             <WouterRouter>

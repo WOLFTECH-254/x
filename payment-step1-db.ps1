@@ -1,491 +1,350 @@
 # ============================================================
-# create-wallet-page.ps1
-# Creates user Payments/Wallet page + updates navbar
+# fix-payment-modal.ps1
+# Card = Paystack inline popup (no new tab)
+# M-Pesa = phone number input + STK push only
 # Run from: C:\Users\user\OneDrive\Desktop\JUNEX\June-Theme-UI
 # ============================================================
 
-$frontendSrc = "artifacts\junex\src"
+Write-Host "`n[1/2] Installing @paystack/inline-js..." -ForegroundColor Cyan
+pnpm --filter @workspace/junex add @paystack/inline-js
+Write-Host "  Done." -ForegroundColor Green
 
-Write-Host "`n[1/3] Creating payments/wallet page..." -ForegroundColor Cyan
+Write-Host "`n[2/2] Rewriting payment-modal.tsx..." -ForegroundColor Cyan
 
-$walletPage = @'
-import { useEffect, useState } from "react";
-import { Link } from "wouter";
-import { Layout } from "@/components/layout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+$paymentModal = @'
+import { useState, useEffect } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { useAuth } from "@/hooks/use-auth";
-import { format } from "date-fns";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import {
-  Loader2, CreditCard, CheckCircle2, Clock, XCircle,
-  Smartphone, Receipt, ArrowRight, ShoppingBag,
+  CreditCard, Smartphone, Loader2, CheckCircle2,
+  Shield, ArrowRight, Gift, ChevronLeft,
 } from "lucide-react";
 
 const API_BASE = "http://localhost:8080";
 
-interface Payment {
-  id: number;
+type PaymentMethod = "card" | "mpesa";
+type Step = "method" | "mpesa-phone" | "mpesa-pending" | "done";
+
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPaymentSuccess: () => void;
   templateId: number;
   templateName: string;
-  reference: string;
-  amount: number;
+  price: number;
   currency: string;
-  status: string;
-  method: string;
-  paidAt: string | null;
-  createdAt: string;
+  isFree: boolean;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { className: string; icon: React.ReactNode }> = {
-    success: {
-      className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20",
-      icon: <CheckCircle2 className="h-3 w-3" />,
-    },
-    pending: {
-      className: "bg-amber-500/15 text-amber-500 border-amber-500/20",
-      icon: <Clock className="h-3 w-3" />,
-    },
-    failed: {
-      className: "bg-red-500/15 text-red-500 border-red-500/20",
-      icon: <XCircle className="h-3 w-3" />,
-    },
-  };
-  const { className, icon } = config[status] ?? config.pending;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${className}`}>
-      {icon} {status}
-    </span>
-  );
+function formatPrice(price: number, currency: string) {
+  return `${currency} ${(price / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 }
 
-function MethodIcon({ method }: { method: string }) {
-  if (method === "mpesa") return <Smartphone className="h-4 w-4 text-primary" />;
-  return <CreditCard className="h-4 w-4 text-primary" />;
-}
+export function PaymentModal({
+  open, onOpenChange, onPaymentSuccess,
+  templateId, templateName, price, currency, isFree,
+}: Props) {
+  const { toast } = useToast();
+  const [method, setMethod] = useState<PaymentMethod>("card");
+  const [step, setStep] = useState<Step>("method");
+  const [phone, setPhone] = useState("");
+  const [reference, setReference] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
-function formatAmount(amount: number, currency: string): string {
-  return `${currency} ${(amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-export default function WalletPage() {
-  const { user } = useAuth();
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
+  function authHeader() {
     const token = localStorage.getItem("junex_token");
-    fetch(`${API_BASE}/api/payments/my`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((data) => { setPayments(Array.isArray(data) ? data : []); })
-      .catch(() => setPayments([]))
-      .finally(() => setIsLoading(false));
-  }, []);
+    return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  }
 
-  const totalSpent = payments
-    .filter((p) => p.status === "success")
-    .reduce((sum, p) => sum + p.amount, 0);
+  function reset() {
+    setStep("method"); setPhone(""); setReference(""); setIsLoading(false); setIsVerifying(false);
+  }
 
-  const successCount = payments.filter((p) => p.status === "success").length;
-  const pendingCount = payments.filter((p) => p.status === "pending").length;
+  // ── Card payment via Paystack inline popup ─────────────────
+  async function handleCardPay() {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/initiate`, {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({ templateId, currency }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: data.error ?? "Payment failed", variant: "destructive" });
+        return;
+      }
 
-  return (
-    <Layout>
-      <div className="container max-w-4xl px-4 py-8 mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Payments & Wallet</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Your payment history and transaction records
-          </p>
-        </div>
+      // Load Paystack inline and open popup
+      const PaystackPop = (await import("@paystack/inline-js")).default;
+      const handler = new PaystackPop();
+      handler.newTransaction({
+        key: "", // Paystack uses the accessCode instead
+        accessCode: data.accessCode,
+        onSuccess: async (transaction: { reference: string }) => {
+          // Verify on our backend
+          const vRes = await fetch(`${API_BASE}/api/payments/verify/${transaction.reference}`, {
+            headers: authHeader(),
+          });
+          const vData = await vRes.json();
+          if (vData.unlocked) {
+            toast({ title: "Payment successful! Deploying your bot..." });
+            setStep("done");
+            setTimeout(() => { onPaymentSuccess(); onOpenChange(false); reset(); }, 1000);
+          } else {
+            toast({ title: "Payment verification failed. Contact support.", variant: "destructive" });
+          }
+        },
+        onCancel: () => {
+          toast({ title: "Payment cancelled" });
+          setIsLoading(false);
+        },
+      });
+    } catch (err) {
+      toast({ title: "Could not initiate payment", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-          <Card className="border-border/40">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Total Spent</CardTitle>
-              <Receipt className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold text-primary">
-                {payments.length > 0 && payments[0]?.currency
-                  ? formatAmount(totalSpent, payments.find(p => p.status === "success")?.currency ?? "KES")
-                  : "—"}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{successCount} successful payment{successCount !== 1 ? "s" : ""}</p>
-            </CardContent>
-          </Card>
+  // ── M-Pesa STK push ────────────────────────────────────────
+  async function handleStkPush() {
+    if (!phone.trim()) {
+      toast({ title: "Enter your M-Pesa phone number", variant: "destructive" });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/stk-push`, {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({ templateId, phone: phone.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: data.error ?? "STK push failed", variant: "destructive" });
+        return;
+      }
+      setReference(data.reference);
+      setStep("mpesa-pending");
+      toast({ title: "STK push sent! Check your phone." });
+    } catch {
+      toast({ title: "STK push failed", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
-          <Card className="border-border/40">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Bots Unlocked</CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold">{successCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">Ready to deploy</p>
-            </CardContent>
-          </Card>
+  // ── Verify M-Pesa payment ──────────────────────────────────
+  async function handleVerify() {
+    if (!reference) return;
+    setIsVerifying(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/verify/${reference}`, {
+        headers: authHeader(),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        toast({ title: "Payment confirmed! Deploying your bot..." });
+        setStep("done");
+        setTimeout(() => { onPaymentSuccess(); onOpenChange(false); reset(); }, 1000);
+      } else {
+        toast({ title: "Payment not confirmed yet", description: "Enter PIN on your phone and try again." });
+      }
+    } catch {
+      toast({ title: "Verification failed", variant: "destructive" });
+    } finally {
+      setIsVerifying(false);
+    }
+  }
 
-          <Card className="border-border/40 col-span-2 md:col-span-1">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Pending</CardTitle>
-              <Clock className="h-4 w-4 text-amber-500" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold">{pendingCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">Awaiting confirmation</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Transactions */}
-        <Card className="border-border/40">
-          <CardHeader className="p-4 md:p-6">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Receipt className="h-4 w-4" /> Transaction History
-            </CardTitle>
-            <CardDescription>All your payment records</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="h-7 w-7 animate-spin text-primary" />
-              </div>
-            ) : payments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-                <ShoppingBag className="h-12 w-12 text-muted-foreground/20 mb-4" />
-                <p className="font-medium text-muted-foreground">No payments yet</p>
-                <p className="text-sm text-muted-foreground mt-1 mb-5">
-                  Browse templates and deploy your first bot.
-                </p>
-                <Button asChild size="sm">
-                  <Link href="/templates">Browse Templates <ArrowRight className="h-4 w-4 ml-1.5" /></Link>
-                </Button>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/40">
-                {payments.map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center gap-4 px-4 md:px-6 py-4 hover:bg-muted/30 transition-colors"
-                  >
-                    {/* Icon */}
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      <MethodIcon method={payment.method} />
-                    </div>
-
-                    {/* Details */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-sm truncate">{payment.templateName}</p>
-                        <StatusBadge status={payment.status} />
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <p className="text-xs text-muted-foreground font-mono truncate">
-                          {payment.reference}
-                        </p>
-                        <span className="text-xs text-muted-foreground capitalize hidden sm:inline">
-                          {payment.method === "mpesa" ? "M-Pesa" : "Card"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {format(new Date(payment.createdAt), "MMM d, yyyy · h:mm a")}
-                      </p>
-                    </div>
-
-                    {/* Amount */}
-                    <div className="text-right flex-shrink-0">
-                      <p className={`font-semibold text-sm ${payment.status === "success" ? "text-foreground" : "text-muted-foreground"}`}>
-                        {formatAmount(payment.amount, payment.currency)}
-                      </p>
-                      {payment.status === "success" && (
-                        <Link
-                          href="/templates"
-                          className="text-xs text-primary hover:underline mt-0.5 block"
-                        >
-                          Deploy
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
-  );
-}
-'@
-
-Set-Content -Path "$frontendSrc\pages\wallet.tsx" -Value $walletPage -Encoding UTF8
-Write-Host "  wallet.tsx created." -ForegroundColor Green
-
-# ============================================================
-Write-Host "`n[2/3] Adding /wallet route to App.tsx..." -ForegroundColor Cyan
-
-$appTsx = @'
-import { Switch, Route, Router as WouterRouter } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { ThemeProvider } from "@/components/theme-provider";
-import { AuthProvider } from "@/hooks/use-auth";
-import { ProtectedRoute } from "@/components/protected-route";
-import { setBaseUrl } from "@workspace/api-client-react";
-import NotFound from "@/pages/not-found";
-import Home from "@/pages/home";
-import Login from "@/pages/login";
-import Register from "@/pages/register";
-import Dashboard from "@/pages/dashboard";
-import Templates from "@/pages/templates";
-import TemplateDetail from "@/pages/template-detail";
-import DeploymentDetail from "@/pages/deployment-detail";
-import AdminDashboard from "@/pages/admin-dashboard";
-import AdminTemplateNew from "@/pages/admin-template-new";
-import OAuthCallback from "@/pages/oauth-callback";
-import WalletPage from "@/pages/wallet";
-
-setBaseUrl("http://localhost:8080");
-
-const queryClient = new QueryClient();
-
-function Router() {
-  return (
-    <Switch>
-      {/* Public */}
-      <Route path="/" component={Home} />
-      <Route path="/login" component={Login} />
-      <Route path="/register" component={Register} />
-      <Route path="/oauth-callback" component={OAuthCallback} />
-
-      {/* Protected user routes */}
-      <Route path="/dashboard">
-        <ProtectedRoute><Dashboard /></ProtectedRoute>
-      </Route>
-      <Route path="/templates">
-        <ProtectedRoute><Templates /></ProtectedRoute>
-      </Route>
-      <Route path="/templates/:id">
-        {() => <ProtectedRoute><TemplateDetail /></ProtectedRoute>}
-      </Route>
-      <Route path="/deployments/:id">
-        {() => <ProtectedRoute><DeploymentDetail /></ProtectedRoute>}
-      </Route>
-      <Route path="/wallet">
-        <ProtectedRoute><WalletPage /></ProtectedRoute>
-      </Route>
-
-      {/* Admin only */}
-      <Route path="/admin">
-        <ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>
-      </Route>
-      <Route path="/admin/templates/new">
-        <ProtectedRoute adminOnly><AdminTemplateNew /></ProtectedRoute>
-      </Route>
-
-      <Route component={NotFound} />
-    </Switch>
-  );
-}
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="system" storageKey="junex-theme">
-        <AuthProvider>
-          <TooltipProvider>
-            <WouterRouter>
-              <Router />
-            </WouterRouter>
-            <Toaster />
-          </TooltipProvider>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
-  );
-}
-
-export default App;
-'@
-
-Set-Content -Path "$frontendSrc\App.tsx" -Value $appTsx -Encoding UTF8
-Write-Host "  App.tsx updated with /wallet route." -ForegroundColor Green
-
-# ============================================================
-Write-Host "`n[3/3] Updating navbar to include Wallet link..." -ForegroundColor Cyan
-
-$navbar = @'
-import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
-import { useTheme } from "@/components/theme-provider";
-import {
-  Moon, Sun, Terminal, Menu, X,
-  LayoutDashboard, Grid3X3, ShieldCheck,
-  LogOut, LogIn, UserPlus, Wallet,
-} from "lucide-react";
-
-export function Navbar() {
-  const { user, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
-  const [location] = useLocation();
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  const navLinks = [
-    { href: "/templates", label: "Templates", icon: Grid3X3 },
-    ...(user ? [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/wallet", label: "Payments", icon: Wallet },
-    ] : []),
-    ...(user?.role === "admin" ? [{ href: "/admin", label: "Admin", icon: ShieldCheck }] : []),
-  ];
-
-  function isActive(href: string) {
-    return location === href || location.startsWith(href + "/");
+  // ── Proceed button on method selection ────────────────────
+  function handleProceed() {
+    if (method === "card") {
+      handleCardPay();
+    } else {
+      setStep("mpesa-phone");
+    }
   }
 
   return (
-    <>
-      <nav className="border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
-        <div className="container flex h-16 max-w-screen-2xl items-center px-4 md:px-8">
-          {/* Logo */}
-          <Link href="/" className="mr-6 flex items-center space-x-2 flex-shrink-0" onClick={() => setMobileOpen(false)}>
-            <Terminal className="h-5 w-5 text-primary" />
-            <span className="font-bold text-sm sm:text-base">JuneXDeployment</span>
-          </Link>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) reset(); }}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <CreditCard className="h-5 w-5 text-primary" />
+            {step === "method" && "Choose Payment Method"}
+            {step === "mpesa-phone" && "M-Pesa Payment"}
+            {step === "mpesa-pending" && "Confirm M-Pesa Payment"}
+            {step === "done" && "Payment Complete"}
+          </DialogTitle>
+          <DialogDescription>
+            {step === "method" && `Unlock "${templateName}" — ${formatPrice(price, currency)}`}
+            {step === "mpesa-phone" && `You will be charged ${formatPrice(price, currency)}`}
+            {step === "mpesa-pending" && "Enter your M-Pesa PIN on your phone, then click verify"}
+            {step === "done" && "Your bot is being deployed!"}
+          </DialogDescription>
+        </DialogHeader>
 
-          {/* Desktop nav links */}
-          <div className="hidden md:flex flex-1 items-center gap-1">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive(link.href)
-                    ? "bg-primary/10 text-primary"
-                    : "text-foreground/60 hover:text-foreground hover:bg-muted"
+        {/* ── Free shortcut ── */}
+        {isFree && (
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <div className="h-14 w-14 rounded-full bg-emerald-500/20 flex items-center justify-center">
+              <Gift className="h-7 w-7 text-emerald-500" />
+            </div>
+            <p className="font-semibold">This template is free!</p>
+            <Button className="w-full" onClick={() => { onPaymentSuccess(); onOpenChange(false); }}>
+              Deploy Now
+            </Button>
+          </div>
+        )}
+
+        {/* ── Method selection ── */}
+        {!isFree && step === "method" && (
+          <div className="space-y-4 mt-1">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border border-border/40">
+              <span className="text-sm text-muted-foreground">Amount due</span>
+              <span className="font-bold text-lg text-primary">{formatPrice(price, currency)}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Card */}
+              <button
+                type="button"
+                onClick={() => setMethod("card")}
+                className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  method === "card" ? "border-primary bg-primary/5" : "border-border/40 hover:border-primary/40"
                 }`}
               >
-                {link.label}
-              </Link>
-            ))}
-          </div>
+                <div className={`p-3 rounded-xl ${method === "card" ? "bg-primary/20" : "bg-muted"}`}>
+                  <CreditCard className={`h-6 w-6 ${method === "card" ? "text-primary" : "text-muted-foreground"}`} />
+                </div>
+                <p className="text-sm font-medium">Card</p>
+                <p className="text-xs text-muted-foreground text-center">Visa, Mastercard</p>
+              </button>
 
-          {/* Right side */}
-          <div className="flex items-center gap-2 ml-auto">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9"
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-            >
-              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-              <span className="sr-only">Toggle theme</span>
-            </Button>
-
-            <div className="hidden md:flex items-center gap-2">
-              {user ? (
-                <Button variant="outline" size="sm" onClick={() => logout()} className="gap-2">
-                  <LogOut className="h-3.5 w-3.5" /> Log out
-                </Button>
-              ) : (
-                <>
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href="/login"><LogIn className="h-3.5 w-3.5 mr-1.5" />Log in</Link>
-                  </Button>
-                  <Button size="sm" asChild>
-                    <Link href="/register"><UserPlus className="h-3.5 w-3.5 mr-1.5" />Sign up</Link>
-                  </Button>
-                </>
-              )}
+              {/* M-Pesa */}
+              <button
+                type="button"
+                onClick={() => setMethod("mpesa")}
+                className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  method === "mpesa" ? "border-primary bg-primary/5" : "border-border/40 hover:border-primary/40"
+                }`}
+              >
+                <div className={`p-3 rounded-xl ${method === "mpesa" ? "bg-primary/20" : "bg-muted"}`}>
+                  <Smartphone className={`h-6 w-6 ${method === "mpesa" ? "text-primary" : "text-muted-foreground"}`} />
+                </div>
+                <p className="text-sm font-medium">M-Pesa</p>
+                <p className="text-xs text-muted-foreground text-center">STK Push</p>
+              </button>
             </div>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 md:hidden"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Toggle menu"
-            >
-              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Shield className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+              Secured by Paystack
+            </div>
+
+            <Button className="w-full gap-2" onClick={handleProceed} disabled={isLoading}>
+              {isLoading
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Opening...</>
+                : <><ArrowRight className="h-4 w-4" /> Continue with {method === "card" ? "Card" : "M-Pesa"}</>
+              }
             </Button>
           </div>
-        </div>
-      </nav>
+        )}
 
-      {/* Mobile drawer */}
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setMobileOpen(false)}
-          />
-          <div className="absolute top-16 left-0 right-0 bg-background border-b border-border/40 shadow-xl animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="container px-4 py-4 space-y-1">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
-                    isActive(link.href)
-                      ? "bg-primary/10 text-primary"
-                      : "text-foreground/70 hover:text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <link.icon className="h-4 w-4" />
-                  {link.label}
-                </Link>
-              ))}
-              <div className="pt-3 mt-3 border-t border-border/40">
-                {user ? (
-                  <button
-                    onClick={() => { logout(); setMobileOpen(false); }}
-                    className="flex items-center gap-3 px-4 py-3 w-full rounded-xl text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    <LogOut className="h-4 w-4" /> Log out
-                  </button>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <Link href="/login" onClick={() => setMobileOpen(false)}>
-                      <Button variant="outline" className="w-full gap-2">
-                        <LogIn className="h-4 w-4" /> Log in
-                      </Button>
-                    </Link>
-                    <Link href="/register" onClick={() => setMobileOpen(false)}>
-                      <Button className="w-full gap-2">
-                        <UserPlus className="h-4 w-4" /> Sign up
-                      </Button>
-                    </Link>
-                  </div>
-                )}
+        {/* ── M-Pesa phone input ── */}
+        {!isFree && step === "mpesa-phone" && (
+          <div className="space-y-4 mt-1">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border border-border/40">
+              <span className="text-sm text-muted-foreground">Amount</span>
+              <span className="font-bold text-primary">{formatPrice(price, currency)}</span>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="mpesa-phone">M-Pesa Phone Number</Label>
+              <Input
+                id="mpesa-phone"
+                placeholder="254712345678"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="font-mono text-base"
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">
+                Format: <code>254XXXXXXXXX</code> — Safaricom Kenya only
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1 gap-2" onClick={() => setStep("method")}>
+                <ChevronLeft className="h-4 w-4" /> Back
+              </Button>
+              <Button className="flex-1 gap-2" onClick={handleStkPush} disabled={isLoading}>
+                {isLoading
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending...</>
+                  : <><Smartphone className="h-4 w-4" /> Send STK Push</>
+                }
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── M-Pesa pending verify ── */}
+        {!isFree && step === "mpesa-pending" && (
+          <div className="space-y-4 mt-1 text-center">
+            <div className="flex flex-col items-center gap-3 py-4">
+              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                <Smartphone className="h-8 w-8 text-primary animate-pulse" />
               </div>
+              <p className="font-semibold">Check your phone</p>
+              <p className="text-sm text-muted-foreground">
+                A payment request was sent to <strong>{phone}</strong>.
+                Enter your M-Pesa PIN to complete.
+              </p>
+              <code className="text-xs bg-muted/50 border border-border/40 px-3 py-1.5 rounded-lg text-muted-foreground">
+                {reference}
+              </code>
             </div>
+
+            <Button className="w-full gap-2" onClick={handleVerify} disabled={isVerifying}>
+              {isVerifying
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Verifying...</>
+                : <><CheckCircle2 className="h-4 w-4" /> I have paid — Verify</>
+              }
+            </Button>
+            <Button variant="ghost" size="sm" className="w-full text-muted-foreground" onClick={reset}>
+              Start over
+            </Button>
           </div>
-        </div>
-      )}
-    </>
+        )}
+
+        {/* ── Done ── */}
+        {step === "done" && (
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <div className="h-16 w-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
+              <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+            </div>
+            <p className="font-semibold text-lg">Payment Confirmed!</p>
+            <p className="text-sm text-muted-foreground">Proceeding to deploy your bot...</p>
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 '@
 
-Set-Content -Path "$frontendSrc\components\navbar.tsx" -Value $navbar -Encoding UTF8
-Write-Host "  navbar.tsx updated with Payments link." -ForegroundColor Green
+Set-Content -Path "artifacts\junex\src\components\payment-modal.tsx" -Value $paymentModal -Encoding UTF8
+Write-Host "  payment-modal.tsx rewritten." -ForegroundColor Green
 
-Write-Host "`nDone! Wallet/Payments page created:" -ForegroundColor Green
-Write-Host "  - Summary cards: Total Spent, Bots Unlocked, Pending" -ForegroundColor White
-Write-Host "  - Full transaction history with status, method, amount, date" -ForegroundColor White
-Write-Host "  - Empty state with Browse Templates CTA" -ForegroundColor White
-Write-Host "  - Accessible at /wallet (protected, logged-in users only)" -ForegroundColor White
-Write-Host "  - Added to navbar as Payments link" -ForegroundColor White
+Write-Host "`nDone! Payment flow:" -ForegroundColor Green
+Write-Host "  Card   -> Paystack inline popup (no new tab)" -ForegroundColor White
+Write-Host "  M-Pesa -> Phone input only -> STK push -> verify button" -ForegroundColor White
+Write-Host "  Both   -> Auto-proceed to deploy on success" -ForegroundColor White
 Write-Host "`nVite will hot-reload automatically." -ForegroundColor Yellow

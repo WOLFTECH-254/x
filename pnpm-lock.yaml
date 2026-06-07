@@ -210,6 +210,10 @@ importers:
         version: 3.1.0
 
   artifacts/junex:
+    dependencies:
+      '@paystack/inline-js':
+        specifier: ^2.22.9
+        version: 2.22.9
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0
@@ -986,6 +990,10 @@ packages:
 
   '@orval/zod@8.9.1':
     resolution: {integrity: sha512-MV75Xzz28W3ZttloNNmdTPa96AneY8FZExEwxmcySdY7lirJtErsqXt2EHnorETDAVEvSldVszhWG/AXpFBAPg==}
+
+  '@paystack/inline-js@2.22.9':
+    resolution: {integrity: sha512-X6kbt1exKDua1DL0iFuTSWy7l3oZ3SRdIhNwCW0cFCQ/NPk6fXypV2wXL8DBurEKqjda1WU+i0szUY/+av6EJA==}
+    engines: {node: '>= 22.0.0'}
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -3878,6 +3886,8 @@ snapshots:
       - '@faker-js/faker'
       - supports-color
       - typescript
+
+  '@paystack/inline-js@2.22.9': {}
 
   '@pinojs/redact@0.4.0': {}
 

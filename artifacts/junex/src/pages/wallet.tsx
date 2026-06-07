@@ -1,214 +1,559 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import {
-  Loader2, CreditCard, CheckCircle2, Clock, XCircle,
-  Smartphone, Receipt, ArrowRight, ShoppingBag,
+  Loader2, CreditCard, Smartphone, CheckCircle2, Clock, XCircle,
+  Receipt, ArrowRight, ShoppingBag, Plus, Wallet, ChevronLeft,
+  ArrowUpRight, ArrowDownLeft, Shield,
 } from "lucide-react";
 
 const API_BASE = "http://localhost:8080";
 
-interface Payment {
+interface WalletData {
+  balance: number;
+  currency: string;
+  transactions: Transaction[];
+}
+
+interface Transaction {
   id: number;
-  templateId: number;
-  templateName: string;
-  reference: string;
+  type: "deposit" | "deduction";
   amount: number;
   currency: string;
+  description: string;
   status: string;
-  method: string;
-  paidAt: string | null;
+  method: string | null;
+  balanceAfter: number;
+  reference: string | null;
   createdAt: string;
 }
 
+type DepositStep = "amount" | "method" | "mpesa-phone" | "mpesa-pending" | "card-pending" | "done";
+
+const PRESET_AMOUNTS = [500, 1000, 2000, 5000];
+
 function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { className: string; icon: React.ReactNode }> = {
-    success: {
-      className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20",
-      icon: <CheckCircle2 className="h-3 w-3" />,
-    },
-    pending: {
-      className: "bg-amber-500/15 text-amber-500 border-amber-500/20",
-      icon: <Clock className="h-3 w-3" />,
-    },
-    failed: {
-      className: "bg-red-500/15 text-red-500 border-red-500/20",
-      icon: <XCircle className="h-3 w-3" />,
-    },
+  const cfg: Record<string, string> = {
+    success: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20",
+    pending: "bg-amber-500/15 text-amber-500 border-amber-500/20",
+    failed: "bg-red-500/15 text-red-500 border-red-500/20",
   };
-  const { className, icon } = config[status] ?? config.pending;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${className}`}>
-      {icon} {status}
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg[status] ?? cfg.pending}`}>
+      {status === "success" && <CheckCircle2 className="h-3 w-3" />}
+      {status === "pending" && <Clock className="h-3 w-3" />}
+      {status === "failed" && <XCircle className="h-3 w-3" />}
+      {status}
     </span>
   );
 }
 
-function MethodIcon({ method }: { method: string }) {
-  if (method === "mpesa") return <Smartphone className="h-4 w-4 text-primary" />;
-  return <CreditCard className="h-4 w-4 text-primary" />;
+function fmt(amount: number, currency = "KES") {
+  return `${currency} ${(amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 }
 
-function formatAmount(amount: number, currency: string): string {
-  return `${currency} ${(amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function authHeader() {
+  const token = localStorage.getItem("junex_token");
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
 export default function WalletPage() {
-  const { user } = useAuth();
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const { toast } = useToast();
+  const [data, setData] = useState<WalletData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showDeposit, setShowDeposit] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem("junex_token");
-    fetch(`${API_BASE}/api/payments/my`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((data) => { setPayments(Array.isArray(data) ? data : []); })
-      .catch(() => setPayments([]))
-      .finally(() => setIsLoading(false));
+  // Deposit modal state
+  const [step, setStep] = useState<DepositStep>("amount");
+  const [customAmount, setCustomAmount] = useState("");
+  const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  const [method, setMethod] = useState<"card" | "mpesa">("card");
+  const [phone, setPhone] = useState("");
+  const [reference, setReference] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  const fetchWallet = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/wallet`, { headers: authHeader() });
+      const json = await res.json();
+      setData(json);
+    } catch {
+      toast({ title: "Could not load wallet", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const totalSpent = payments
-    .filter((p) => p.status === "success")
-    .reduce((sum, p) => sum + p.amount, 0);
+  useEffect(() => { fetchWallet(); }, [fetchWallet]);
 
-  const successCount = payments.filter((p) => p.status === "success").length;
-  const pendingCount = payments.filter((p) => p.status === "pending").length;
+  function getAmount(): number {
+    if (selectedAmount) return selectedAmount * 100;
+    const parsed = parseFloat(customAmount);
+    return isNaN(parsed) ? 0 : Math.round(parsed * 100);
+  }
+
+  function resetDeposit() {
+    setStep("amount"); setCustomAmount(""); setSelectedAmount(null);
+    setMethod("card"); setPhone(""); setReference(""); setIsProcessing(false); setIsVerifying(false);
+  }
+
+  async function handleCardDeposit() {
+    const amount = getAmount();
+    if (amount < 100) { toast({ title: "Enter a valid amount (min KES 1)", variant: "destructive" }); return; }
+    setIsProcessing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/wallet/deposit/card`, {
+        method: "POST", headers: authHeader(),
+        body: JSON.stringify({ amount, currency: "KES" }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast({ title: d.error ?? "Failed", variant: "destructive" }); return; }
+
+      // Open Paystack inline popup
+      const PaystackPop = (await import("@paystack/inline-js")).default;
+      const handler = new PaystackPop();
+      handler.newTransaction({
+        key: "",
+        accessCode: d.accessCode,
+        channels: ["card"],
+        onSuccess: async (tx: { reference: string }) => {
+          setReference(tx.reference);
+          setStep("card-pending");
+          // Auto verify
+          const vRes = await fetch(`${API_BASE}/api/wallet/verify/${tx.reference}`, { headers: authHeader() });
+          const vData = await vRes.json();
+          if (vData.status === "success") {
+            toast({ title: `Wallet topped up! New balance: ${fmt(vData.newBalance)}` });
+            setStep("done");
+            fetchWallet();
+          } else {
+            toast({ title: "Could not confirm payment. Try verifying manually.", variant: "destructive" });
+          }
+          setIsProcessing(false);
+        },
+        onCancel: () => { toast({ title: "Payment cancelled" }); setIsProcessing(false); },
+      });
+    } catch {
+      toast({ title: "Could not initiate payment", variant: "destructive" });
+      setIsProcessing(false);
+    }
+  }
+
+  async function handleStkPush() {
+    if (!phone.trim()) { toast({ title: "Enter your M-Pesa number", variant: "destructive" }); return; }
+    const amount = getAmount();
+    if (amount < 100) { toast({ title: "Enter a valid amount", variant: "destructive" }); return; }
+    setIsProcessing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/wallet/deposit/mpesa`, {
+        method: "POST", headers: authHeader(),
+        body: JSON.stringify({ phone: phone.trim(), amount }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast({ title: d.error ?? "STK push failed", variant: "destructive" }); return; }
+      setReference(d.reference);
+      setStep("mpesa-pending");
+      toast({ title: "STK push sent! Check your phone." });
+    } catch {
+      toast({ title: "STK push failed", variant: "destructive" });
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (!reference) return;
+    setIsVerifying(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/wallet/verify/${reference}`, { headers: authHeader() });
+      const d = await res.json();
+      if (d.status === "success") {
+        toast({ title: `Wallet topped up! New balance: ${fmt(d.newBalance)}` });
+        setStep("done");
+        fetchWallet();
+      } else {
+        toast({ title: "Payment not confirmed yet. Try again after entering PIN.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Verification failed", variant: "destructive" });
+    } finally {
+      setIsVerifying(false);
+    }
+  }
+
+  function handleProceed() {
+    if (method === "card") handleCardDeposit();
+    else setStep("mpesa-phone");
+  }
 
   return (
     <Layout>
       <div className="container max-w-4xl px-4 py-8 mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Payments & Wallet</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Your payment history and transaction records
-          </p>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Wallet</h1>
+            <p className="text-muted-foreground mt-1 text-sm">Manage your balance and transactions</p>
+          </div>
+          <Button className="gap-2" onClick={() => { resetDeposit(); setShowDeposit(true); }}>
+            <Plus className="h-4 w-4" /> Add Funds
+          </Button>
         </div>
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-          <Card className="border-border/40">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Total Spent</CardTitle>
-              <Receipt className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold text-primary">
-                {payments.length > 0 && payments[0]?.currency
-                  ? formatAmount(totalSpent, payments.find(p => p.status === "success")?.currency ?? "KES")
-                  : "â€”"}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{successCount} successful payment{successCount !== 1 ? "s" : ""}</p>
-            </CardContent>
-          </Card>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : (
+          <>
+            {/* Balance card */}
+            <Card className="border-primary/30 bg-primary/5 mb-6">
+              <CardContent className="p-6 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Available Balance</p>
+                  <p className="text-4xl font-bold text-primary">
+                    {fmt(data?.balance ?? 0, data?.currency)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Add funds to deploy bots from our template library
+                  </p>
+                </div>
+                <div className="h-16 w-16 rounded-2xl bg-primary/20 flex items-center justify-center">
+                  <Wallet className="h-8 w-8 text-primary" />
+                </div>
+              </CardContent>
+            </Card>
 
-          <Card className="border-border/40">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Bots Unlocked</CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold">{successCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">Ready to deploy</p>
-            </CardContent>
-          </Card>
+            {/* Summary row */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+              <Card className="border-border/40">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">Total Deposited</CardTitle>
+                  <ArrowUpRight className="h-4 w-4 text-emerald-500" />
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-xl font-bold">
+                    {fmt(
+                      (data?.transactions ?? [])
+                        .filter(t => t.type === "deposit" && t.status === "success")
+                        .reduce((s, t) => s + t.amount, 0),
+                      data?.currency
+                    )}
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card className="border-border/40 col-span-2 md:col-span-1">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">Pending</CardTitle>
-              <Clock className="h-4 w-4 text-amber-500" />
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="text-xl md:text-2xl font-bold">{pendingCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">Awaiting confirmation</p>
-            </CardContent>
-          </Card>
-        </div>
+              <Card className="border-border/40">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">Total Spent</CardTitle>
+                  <ArrowDownLeft className="h-4 w-4 text-red-400" />
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-xl font-bold">
+                    {fmt(
+                      (data?.transactions ?? [])
+                        .filter(t => t.type === "deduction")
+                        .reduce((s, t) => s + t.amount, 0),
+                      data?.currency
+                    )}
+                  </p>
+                </CardContent>
+              </Card>
 
-        {/* Transactions */}
-        <Card className="border-border/40">
-          <CardHeader className="p-4 md:p-6">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Receipt className="h-4 w-4" /> Transaction History
-            </CardTitle>
-            <CardDescription>All your payment records</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="h-7 w-7 animate-spin text-primary" />
-              </div>
-            ) : payments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-                <ShoppingBag className="h-12 w-12 text-muted-foreground/20 mb-4" />
-                <p className="font-medium text-muted-foreground">No payments yet</p>
-                <p className="text-sm text-muted-foreground mt-1 mb-5">
-                  Browse templates and deploy your first bot.
-                </p>
-                <Button asChild size="sm">
-                  <Link href="/templates">Browse Templates <ArrowRight className="h-4 w-4 ml-1.5" /></Link>
-                </Button>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/40">
-                {payments.map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center gap-4 px-4 md:px-6 py-4 hover:bg-muted/30 transition-colors"
-                  >
-                    {/* Icon */}
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      <MethodIcon method={payment.method} />
-                    </div>
+              <Card className="border-border/40 col-span-2 md:col-span-1">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">Transactions</CardTitle>
+                  <Receipt className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-xl font-bold">{data?.transactions?.length ?? 0}</p>
+                </CardContent>
+              </Card>
+            </div>
 
-                    {/* Details */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-sm truncate">{payment.templateName}</p>
-                        <StatusBadge status={payment.status} />
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <p className="text-xs text-muted-foreground font-mono truncate">
-                          {payment.reference}
-                        </p>
-                        <span className="text-xs text-muted-foreground capitalize hidden sm:inline">
-                          {payment.method === "mpesa" ? "M-Pesa" : "Card"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {format(new Date(payment.createdAt), "MMM d, yyyy Â· h:mm a")}
-                      </p>
-                    </div>
-
-                    {/* Amount */}
-                    <div className="text-right flex-shrink-0">
-                      <p className={`font-semibold text-sm ${payment.status === "success" ? "text-foreground" : "text-muted-foreground"}`}>
-                        {formatAmount(payment.amount, payment.currency)}
-                      </p>
-                      {payment.status === "success" && (
-                        <Link
-                          href="/templates"
-                          className="text-xs text-primary hover:underline mt-0.5 block"
-                        >
-                          Deploy
-                        </Link>
-                      )}
-                    </div>
+            {/* Transaction history */}
+            <Card className="border-border/40">
+              <CardHeader className="p-4 md:p-6">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Receipt className="h-4 w-4" /> Transaction History
+                </CardTitle>
+                <CardDescription>All deposits and bot deployments</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {!data?.transactions?.length ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+                    <ShoppingBag className="h-12 w-12 text-muted-foreground/20 mb-4" />
+                    <p className="font-medium text-muted-foreground">No transactions yet</p>
+                    <p className="text-sm text-muted-foreground mt-1 mb-5">Add funds to get started.</p>
+                    <Button size="sm" onClick={() => { resetDeposit(); setShowDeposit(true); }}>
+                      <Plus className="h-4 w-4 mr-1.5" /> Add Funds
+                    </Button>
                   </div>
+                ) : (
+                  <div className="divide-y divide-border/40">
+                    {data.transactions.map((tx) => (
+                      <div key={tx.id} className="flex items-center gap-4 px-4 md:px-6 py-4 hover:bg-muted/20 transition-colors">
+                        <div className={`h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                          tx.type === "deposit" ? "bg-emerald-500/10" : "bg-red-500/10"
+                        }`}>
+                          {tx.type === "deposit"
+                            ? <ArrowUpRight className="h-5 w-5 text-emerald-500" />
+                            : <ArrowDownLeft className="h-5 w-5 text-red-400" />
+                          }
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium text-sm">{tx.description}</p>
+                            <StatusBadge status={tx.status} />
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {tx.method && (
+                              <span className="text-xs text-muted-foreground capitalize">
+                                {tx.method === "mpesa" ? "M-Pesa" : "Card"}
+                              </span>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {format(new Date(tx.createdAt), "MMM d, yyyy h:mm a")}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className={`font-semibold text-sm ${tx.type === "deposit" ? "text-emerald-500" : "text-red-400"}`}>
+                            {tx.type === "deposit" ? "+" : "-"}{fmt(tx.amount, tx.currency)}
+                          </p>
+                          {tx.status === "success" && (
+                            <p className="text-xs text-muted-foreground">bal: {fmt(tx.balanceAfter, tx.currency)}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
+
+      {/* â”€â”€ Deposit Modal â”€â”€ */}
+      <Dialog open={showDeposit} onOpenChange={(v) => { setShowDeposit(v); if (!v) resetDeposit(); }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-primary" />
+              {step === "amount" && "Add Funds"}
+              {step === "method" && "Choose Payment Method"}
+              {step === "mpesa-phone" && "M-Pesa Payment"}
+              {step === "mpesa-pending" && "Confirm Payment"}
+              {step === "card-pending" && "Processing..."}
+              {step === "done" && "Funds Added!"}
+            </DialogTitle>
+            <DialogDescription>
+              {step === "amount" && "Select or enter an amount to add to your wallet"}
+              {step === "method" && `Adding ${fmt(getAmount())} to your wallet`}
+              {step === "mpesa-phone" && `You will be charged ${fmt(getAmount())}`}
+              {step === "mpesa-pending" && "Enter your M-Pesa PIN, then verify below"}
+              {step === "card-pending" && "Verifying your payment..."}
+              {step === "done" && "Your wallet balance has been updated"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* â”€â”€ Step: Amount â”€â”€ */}
+          {step === "amount" && (
+            <div className="space-y-4 mt-1">
+              <div className="grid grid-cols-2 gap-3">
+                {PRESET_AMOUNTS.map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => { setSelectedAmount(a); setCustomAmount(""); }}
+                    className={`p-3 rounded-xl border-2 text-sm font-semibold transition-all ${
+                      selectedAmount === a
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border/40 hover:border-primary/40"
+                    }`}
+                  >
+                    KES {a.toLocaleString()}
+                  </button>
                 ))}
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              <div className="space-y-1.5">
+                <Label>Custom amount (KES)</Label>
+                <Input
+                  type="number"
+                  placeholder="Enter amount..."
+                  value={customAmount}
+                  onChange={(e) => { setCustomAmount(e.target.value); setSelectedAmount(null); }}
+                  min={1}
+                  className="text-base"
+                />
+              </div>
+              <Button
+                className="w-full gap-2"
+                onClick={() => {
+                  const amt = getAmount();
+                  if (amt < 100) { toast({ title: "Minimum deposit is KES 1", variant: "destructive" }); return; }
+                  setStep("method");
+                }}
+              >
+                Continue <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+
+          {/* â”€â”€ Step: Method â”€â”€ */}
+          {step === "method" && (
+            <div className="space-y-4 mt-1">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border border-border/40">
+                <span className="text-sm text-muted-foreground">Amount to deposit</span>
+                <span className="font-bold text-primary text-lg">{fmt(getAmount())}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setMethod("card")}
+                  className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 transition-all ${
+                    method === "card" ? "border-primary bg-primary/5" : "border-border/40 hover:border-primary/40"
+                  }`}
+                >
+                  <div className={`p-3 rounded-xl ${method === "card" ? "bg-primary/20" : "bg-muted"}`}>
+                    <CreditCard className={`h-6 w-6 ${method === "card" ? "text-primary" : "text-muted-foreground"}`} />
+                  </div>
+                  <p className="text-sm font-medium">Card</p>
+                  <p className="text-xs text-muted-foreground text-center">Visa, Mastercard</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMethod("mpesa")}
+                  className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 transition-all ${
+                    method === "mpesa" ? "border-primary bg-primary/5" : "border-border/40 hover:border-primary/40"
+                  }`}
+                >
+                  <div className={`p-3 rounded-xl ${method === "mpesa" ? "bg-primary/20" : "bg-muted"}`}>
+                    <Smartphone className={`h-6 w-6 ${method === "mpesa" ? "text-primary" : "text-muted-foreground"}`} />
+                  </div>
+                  <p className="text-sm font-medium">M-Pesa</p>
+                  <p className="text-xs text-muted-foreground text-center">STK Push</p>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Shield className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                Secured by Paystack
+              </div>
+
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1 gap-2" onClick={() => setStep("amount")}>
+                  <ChevronLeft className="h-4 w-4" /> Back
+                </Button>
+                <Button className="flex-1 gap-2" onClick={handleProceed} disabled={isProcessing}>
+                  {isProcessing
+                    ? <><Loader2 className="h-4 w-4 animate-spin" /> Opening...</>
+                    : <><ArrowRight className="h-4 w-4" /> Pay Now</>
+                  }
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* â”€â”€ Step: M-Pesa phone â”€â”€ */}
+          {step === "mpesa-phone" && (
+            <div className="space-y-4 mt-1">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border border-border/40">
+                <span className="text-sm text-muted-foreground">Amount</span>
+                <span className="font-bold text-primary">{fmt(getAmount())}</span>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mpesa-phone">M-Pesa Phone Number</Label>
+                <Input
+                  id="mpesa-phone"
+                  placeholder="254712345678"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="font-mono text-base"
+                  autoFocus
+                />
+                <p className="text-xs text-muted-foreground">Format: 254XXXXXXXXX (Safaricom Kenya)</p>
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1 gap-2" onClick={() => setStep("method")}>
+                  <ChevronLeft className="h-4 w-4" /> Back
+                </Button>
+                <Button className="flex-1 gap-2" onClick={handleStkPush} disabled={isProcessing}>
+                  {isProcessing
+                    ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending...</>
+                    : <><Smartphone className="h-4 w-4" /> Send STK Push</>
+                  }
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* â”€â”€ Step: M-Pesa pending â”€â”€ */}
+          {step === "mpesa-pending" && (
+            <div className="space-y-4 mt-1 text-center">
+              <div className="flex flex-col items-center gap-3 py-4">
+                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Smartphone className="h-8 w-8 text-primary animate-pulse" />
+                </div>
+                <p className="font-semibold">Check your phone</p>
+                <p className="text-sm text-muted-foreground">
+                  STK push sent to <strong>{phone}</strong>. Enter your M-Pesa PIN.
+                </p>
+                <code className="text-xs bg-muted/50 border border-border/40 px-3 py-1.5 rounded-lg text-muted-foreground">
+                  {reference}
+                </code>
+              </div>
+              <Button className="w-full gap-2" onClick={handleVerify} disabled={isVerifying}>
+                {isVerifying
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Verifying...</>
+                  : <><CheckCircle2 className="h-4 w-4" /> I have paid - Verify</>
+                }
+              </Button>
+              <Button variant="ghost" size="sm" className="w-full" onClick={resetDeposit}>Start over</Button>
+            </div>
+          )}
+
+          {/* â”€â”€ Step: Card pending â”€â”€ */}
+          {step === "card-pending" && (
+            <div className="flex flex-col items-center gap-4 py-8 text-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <p className="font-medium">Confirming your payment...</p>
+            </div>
+          )}
+
+          {/* â”€â”€ Step: Done â”€â”€ */}
+          {step === "done" && (
+            <div className="flex flex-col items-center gap-4 py-6 text-center">
+              <div className="h-16 w-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+              </div>
+              <p className="font-semibold text-lg">Funds Added!</p>
+              <p className="text-sm text-muted-foreground">Your wallet balance has been updated.</p>
+              <div className="flex gap-3 w-full mt-2">
+                <Button variant="outline" className="flex-1" onClick={() => { setShowDeposit(false); resetDeposit(); }}>
+                  Close
+                </Button>
+                <Button className="flex-1 gap-2" asChild>
+                  <Link href="/templates">Deploy a Bot <ArrowRight className="h-4 w-4" /></Link>
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

@@ -8,6 +8,7 @@ import deploymentsRouter from "./deployments";
 import dashboardRouter from "./dashboard";
 import adminRouter from "./admin";
 import paymentsRouter from "./payments";
+import walletRouter from "./wallet";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(deploymentsRouter);
 router.use(dashboardRouter);
 router.use(adminRouter);
 router.use(paymentsRouter);
+router.use(walletRouter);
 
 export default router;
