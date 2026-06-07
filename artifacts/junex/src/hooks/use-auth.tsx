@@ -1,10 +1,12 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+﻿import { createContext, useContext, useState, ReactNode } from "react";
 import { useGetMe, User } from "@workspace/api-client-react";
+import { useLocation } from "wouter";
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (token: string) => void;
+  login: (user: User, token: string) => void;
+  loginWithToken: (token: string) => void;
   logout: () => void;
 }
 
@@ -14,26 +16,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(
     () => localStorage.getItem("junex_token")
   );
+  const [, navigate] = useLocation();
 
-  const { data: user, isLoading, refetch } = useGetMe({
+  const { data: user, isLoading } = useGetMe({
     query: {
       enabled: !!token,
       retry: false,
-    }
+    },
   });
 
-  const login = (newToken: string) => {
+  // Called after email/password login â€” we already have the user object
+  const login = (user: User, newToken: string) => {
     localStorage.setItem("junex_token", newToken);
     setToken(newToken);
+  };
+
+  // Called after OAuth redirect â€” we only have the token, fetch user via useGetMe
+  const loginWithToken = (newToken: string) => {
+    localStorage.setItem("junex_token", newToken);
+    setToken(newToken);
+    navigate("/dashboard");
   };
 
   const logout = () => {
     localStorage.removeItem("junex_token");
     setToken(null);
+    navigate("/");
   };
 
   return (
-    <AuthContext.Provider value={{ user: user || null, isLoading: isLoading && !!token, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user: user || null,
+        isLoading: isLoading && !!token,
+        login,
+        loginWithToken,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

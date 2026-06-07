@@ -1,4 +1,15 @@
-﻿import { Link } from "wouter";
+# ============================================================
+# fix-homepage.ps1
+# Fixes home page responsiveness for JuneX
+# Run from: C:\Users\user\OneDrive\Desktop\JUNEX\June-Theme-UI
+# ============================================================
+
+$frontendSrc = "artifacts\junex\src"
+
+Write-Host "`n[1/1] Rewriting home.tsx with full responsive layout..." -ForegroundColor Cyan
+
+$homeTsx = @'
+import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
@@ -26,7 +37,7 @@ const cards = [
   {
     icon: Terminal,
     title: "Full Control",
-    desc: "Live logs, env var editing, start/stop/restart â€” all from one clean dashboard.",
+    desc: "Live logs, env var editing, start/stop/restart — all from one clean dashboard.",
   },
 ];
 
@@ -38,10 +49,10 @@ export default function Home() {
 
   return (
     <Layout>
-      {/* â”€â”€ Hero â”€â”€ */}
+      {/* ── Hero ── */}
       <section className="container mx-auto px-4 py-16 sm:py-24 flex flex-col items-center text-center gap-6">
         <Badge variant="outline" className="px-3 py-1 text-xs font-medium">
-          Now live â€” deploy your first bot free
+          Now live — deploy your first bot free
         </Badge>
 
         <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight max-w-3xl">
@@ -77,7 +88,7 @@ export default function Home() {
         </ul>
       </section>
 
-      {/* â”€â”€ Feature cards â”€â”€ */}
+      {/* ── Feature cards ── */}
       <section className="container mx-auto px-4 pb-16 sm:pb-24">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {cards.map(({ icon: Icon, title, desc }) => (
@@ -95,7 +106,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* â”€â”€ Bottom CTA banner â”€â”€ */}
+      {/* ── Bottom CTA banner ── */}
       <section className="container mx-auto px-4 pb-20">
         <div className="rounded-2xl border border-primary/20 bg-primary/5 p-8 sm:p-12 flex flex-col items-center text-center gap-4">
           <h2 className="text-2xl sm:text-3xl font-bold">Ready to deploy your bot?</h2>
@@ -112,3 +123,15 @@ export default function Home() {
     </Layout>
   );
 }
+'@
+
+Set-Content -Path "$frontendSrc\pages\home.tsx" -Value $homeTsx -Encoding UTF8
+Write-Host "  home.tsx updated with responsive layout." -ForegroundColor Green
+
+Write-Host "`nDone! Changes:" -ForegroundColor Cyan
+Write-Host "  - Hero: full responsive text sizing, stacked buttons on mobile" -ForegroundColor White
+Write-Host "  - Feature list: wraps horizontally on desktop, stacks on mobile" -ForegroundColor White
+Write-Host "  - Feature cards: 1 col mobile, 2 col tablet, 3 col desktop" -ForegroundColor White
+Write-Host "  - Bottom CTA: full width banner with proper padding" -ForegroundColor White
+Write-Host "  - Fixed garbled em dash encoding" -ForegroundColor White
+Write-Host "`nVite will hot-reload automatically." -ForegroundColor Yellow

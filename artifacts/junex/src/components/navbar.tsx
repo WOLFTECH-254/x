@@ -1,9 +1,13 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
-import { Moon, Sun, Terminal, Menu, X, LayoutDashboard, Grid3X3, ShieldCheck, LogOut, LogIn, UserPlus } from "lucide-react";
+import {
+  Moon, Sun, Terminal, Menu, X,
+  LayoutDashboard, Grid3X3, ShieldCheck,
+  LogOut, LogIn, UserPlus, Wallet,
+} from "lucide-react";
 
 export function Navbar() {
   const { user, logout } = useAuth();
@@ -13,7 +17,10 @@ export function Navbar() {
 
   const navLinks = [
     { href: "/templates", label: "Templates", icon: Grid3X3 },
-    ...(user ? [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] : []),
+    ...(user ? [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/wallet", label: "Payments", icon: Wallet },
+    ] : []),
     ...(user?.role === "admin" ? [{ href: "/admin", label: "Admin", icon: ShieldCheck }] : []),
   ];
 
@@ -50,7 +57,6 @@ export function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2 ml-auto">
-            {/* Theme toggle */}
             <Button
               variant="ghost"
               size="icon"
@@ -62,7 +68,6 @@ export function Navbar() {
               <span className="sr-only">Toggle theme</span>
             </Button>
 
-            {/* Desktop auth buttons */}
             <div className="hidden md:flex items-center gap-2">
               {user ? (
                 <Button variant="outline" size="sm" onClick={() => logout()} className="gap-2">
@@ -80,7 +85,6 @@ export function Navbar() {
               )}
             </div>
 
-            {/* Mobile hamburger */}
             <Button
               variant="ghost"
               size="icon"
@@ -97,13 +101,10 @@ export function Navbar() {
       {/* Mobile drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-
-          {/* Menu panel */}
           <div className="absolute top-16 left-0 right-0 bg-background border-b border-border/40 shadow-xl animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="container px-4 py-4 space-y-1">
               {navLinks.map((link) => (
@@ -121,7 +122,6 @@ export function Navbar() {
                   {link.label}
                 </Link>
               ))}
-
               <div className="pt-3 mt-3 border-t border-border/40">
                 {user ? (
                   <button

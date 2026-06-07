@@ -1,9 +1,18 @@
-﻿import { useEffect } from "react";
+# ============================================================
+# fix-register-oauth.ps1
+# Adds Google & GitHub OAuth buttons to the register page
+# Run from: C:\Users\user\OneDrive\Desktop\JUNEX\June-Theme-UI
+# ============================================================
+
+Write-Host "`n[1/1] Updating register.tsx with OAuth buttons..." -ForegroundColor Cyan
+
+$registerPage = @'
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useLogin } from "@workspace/api-client-react";
+import { useRegister } from "@workspace/api-client-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { Layout } from "@/components/layout";
@@ -14,34 +23,45 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Terminal } from "lucide-react";
 
-const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
+const registerSchema = z.object({
+  username: z.string().min(3, { message: "Username must be at least 3 characters" }),
+  email: z.string().email({ message: "Invalid email address" }),
+  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
-export default function Login() {
+export default function Register() {
   const [, navigate] = useLocation();
   const { user, login } = useAuth();
   const { toast } = useToast();
-  const loginMutation = useLogin();
 
   useEffect(() => {
     if (user) navigate("/dashboard");
   }, [user]);
 
-  const form = useForm<z.infer<typeof loginSchema>>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+  const form = useForm<z.infer<typeof registerSchema>>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: { username: "", email: "", password: "" },
   });
 
-  async function onSubmit(values: z.infer<typeof loginSchema>) {
-    try {
-      const result = await loginMutation.mutateAsync({ data: values });
-      login(result.user, result.token);
-      navigate("/dashboard");
-    } catch {
-      toast({ title: "Login failed", description: "Invalid credentials", variant: "destructive" });
-    }
+  const registerMutation = useRegister({
+    mutation: {
+      onSuccess: (data) => {
+        login(data.user, data.token);
+        toast({ title: "Account created", description: "Welcome to JuneX!" });
+        navigate("/dashboard");
+      },
+      onError: (error: any) => {
+        toast({
+          title: "Registration failed",
+          description: error.data?.error || "Failed to create account. Please try again.",
+          variant: "destructive",
+        });
+      },
+    },
+  });
+
+  function onSubmit(values: z.infer<typeof registerSchema>) {
+    registerMutation.mutate({ data: values });
   }
 
   return (
@@ -54,8 +74,8 @@ export default function Login() {
                 <Terminal className="h-6 w-6 text-primary" />
               </div>
             </div>
-            <CardTitle className="text-2xl tracking-tight">Sign in</CardTitle>
-            <CardDescription>Enter your email below to sign in to your account</CardDescription>
+            <CardTitle className="text-2xl tracking-tight">Create an account</CardTitle>
+            <CardDescription>Enter your information below to create your account</CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
@@ -72,6 +92,19 @@ export default function Login() {
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="username"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Username</FormLabel>
+                      <FormControl>
+                        <Input placeholder="johndoe" autoComplete="username" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="email"
@@ -92,14 +125,14 @@ export default function Login() {
                     <FormItem>
                       <FormLabel>Password</FormLabel>
                       <FormControl>
-                        <Input placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" type="password" autoComplete="current-password" {...field} />
+                        <Input placeholder="Min. 6 characters" type="password" autoComplete="new-password" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-                <Button type="submit" className="w-full" disabled={loginMutation.isPending}>
-                  {loginMutation.isPending ? "Signing in..." : "Sign in"}
+                <Button type="submit" className="w-full" disabled={registerMutation.isPending}>
+                  {registerMutation.isPending ? "Creating account..." : "Create account"}
                 </Button>
               </form>
             </Form>
@@ -107,9 +140,9 @@ export default function Login() {
 
           <CardFooter className="justify-center">
             <p className="text-sm text-muted-foreground">
-              Don&apos;t have an account?{" "}
-              <Link href="/register" className="text-primary underline-offset-4 hover:underline font-medium">
-                Sign up
+              Already have an account?{" "}
+              <Link href="/login" className="text-primary underline-offset-4 hover:underline font-medium">
+                Sign in
               </Link>
             </p>
           </CardFooter>
@@ -118,3 +151,8 @@ export default function Login() {
     </Layout>
   );
 }
+'@
+
+Set-Content -Path "artifacts\junex\src\pages\register.tsx" -Value $registerPage -Encoding UTF8
+Write-Host "  register.tsx updated with OAuth buttons." -ForegroundColor Green
+Write-Host "`nDone! Both login and register pages now have Google and GitHub buttons." -ForegroundColor Green

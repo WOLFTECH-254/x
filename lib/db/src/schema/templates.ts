@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, jsonb } from "drizzle-orm/pg-core";
+﻿import { pgTable, text, serial, timestamp, jsonb, integer, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -10,6 +10,9 @@ export const templatesTable = pgTable("templates", {
   thumbnail: text("thumbnail"),
   category: text("category").notNull(),
   appJson: jsonb("app_json").notNull(),
+  isFree: boolean("is_free").notNull().default(false),
+  price: integer("price").notNull().default(0),       // in smallest currency unit e.g. KES cents
+  currency: text("currency").notNull().default("KES"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
