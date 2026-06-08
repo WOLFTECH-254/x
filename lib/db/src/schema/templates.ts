@@ -11,8 +11,9 @@ export const templatesTable = pgTable("templates", {
   category: text("category").notNull(),
   appJson: jsonb("app_json").notNull(),
   isFree: boolean("is_free").notNull().default(false),
-  price: integer("price").notNull().default(0),       // in smallest currency unit e.g. KES cents
+  price: integer("price").notNull().default(0),
   currency: text("currency").notNull().default("KES"),
+  pairSiteUrl: text("pair_site_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

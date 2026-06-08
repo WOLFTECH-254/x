@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+﻿import { ReactNode } from "react";
 import { Navbar } from "./navbar";
 import { Footer } from "./footer";
 
@@ -13,3 +13,4 @@ export function Layout({ children }: { children: ReactNode }) {
     </div>
   );
 }
+

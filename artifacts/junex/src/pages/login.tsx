@@ -46,8 +46,8 @@ export default function Login() {
 
   return (
     <Layout>
-      <div className="container flex min-h-[80vh] items-center justify-center px-4 py-12">
-        <Card className="w-full max-w-[400px]">
+      <div className="container flex min-h-screen items-center justify-center px-4 py-12">
+        <Card className="w-full max-w-[420px] mx-auto">
           <CardHeader className="space-y-1 text-center">
             <div className="flex justify-center mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
@@ -118,4 +118,6 @@ export default function Login() {
     </Layout>
   );
 }
+
+
 

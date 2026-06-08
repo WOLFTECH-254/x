@@ -72,6 +72,8 @@ export default function AdminTemplateNew() {
     defaultValues: {
       name: "", description: "", githubRepo: "", category: "",
       thumbnail: "", appJson: "{}", isFree: false, price: 0, currency: "KES",
+      pairSiteUrl: "",
+      pairSiteUrl: "",
     },
   });
 
@@ -392,3 +394,5 @@ export default function AdminTemplateNew() {
     </Layout>
   );
 }
+
+
