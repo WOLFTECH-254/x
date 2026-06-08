@@ -1,9 +1,12 @@
+﻿import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/hooks/use-auth";
 import {
   useGetDashboardSummary,
   useStartDeployment,
@@ -13,118 +16,225 @@ import {
 } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/protected-route";
 import {
-  Loader2,
-  Server,
-  Power,
-  AlertCircle,
-  Terminal,
-  Play,
-  Square,
-  RotateCcw,
-  Plus,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Ban,
+  Loader2, Server, AlertCircle, Terminal, Play, Square,
+  RotateCcw, Plus, CheckCircle2, XCircle, Clock, Wallet,
+  ArrowRight, Bot, Activity, Zap, TrendingUp,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
+const API_BASE = "http://localhost:8080";
+
+function authHeader() {
+  const token = localStorage.getItem("JuneXHostingPlatform_token");
+  return { Authorization: `Bearer ${token}` };
+}
+
+function fmt(amount: number, currency = "KES") {
+  return `${currency} ${(amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { className: string; dot: string; icon?: React.ReactNode }> = {
-    online: { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20", dot: "bg-emerald-500" },
-    offline: { className: "bg-slate-500/15 text-slate-400 border-slate-500/20", dot: "bg-slate-400" },
-    error: { className: "bg-red-500/15 text-red-500 border-red-500/20", dot: "bg-red-500" },
-    building: { className: "bg-blue-500/15 text-blue-400 border-blue-500/20", dot: "" },
-    queued: { className: "bg-amber-500/15 text-amber-500 border-amber-500/20", dot: "bg-amber-500" },
+  const config: Record<string, { className: string; dot: string }> = {
+    online:    { className: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20", dot: "bg-emerald-400 animate-pulse" },
+    offline:   { className: "bg-slate-500/15 text-slate-400 border-slate-500/20", dot: "bg-slate-400" },
+    error:     { className: "bg-red-500/15 text-red-400 border-red-500/20", dot: "bg-red-400" },
+    building:  { className: "bg-blue-500/15 text-blue-400 border-blue-500/20", dot: "" },
+    queued:    { className: "bg-amber-500/15 text-amber-400 border-amber-500/20", dot: "bg-amber-400" },
     suspended: { className: "bg-red-500/15 text-red-400 border-red-500/20", dot: "bg-red-400" },
   };
   const { className, dot } = config[status] ?? config.offline;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${className}`}>
-      {status === "building" ? (
-        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-      ) : (
-        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
-      )}
+      {status === "building"
+        ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
+        : <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      }
       {status}
     </span>
   );
 }
 
+function StatusIcon({ status }: { status: string }) {
+  if (status === "online") return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
+  if (status === "error") return <AlertCircle className="h-4 w-4 text-red-400" />;
+  if (status === "building") return <Loader2 className="h-4 w-4 text-blue-400 animate-spin" />;
+  return <XCircle className="h-4 w-4 text-slate-400" />;
+}
+
 export default function Dashboard() {
+  const { user } = useAuth();
   const { data: summary, isLoading } = useGetDashboardSummary();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [walletCurrency, setWalletCurrency] = useState("KES");
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/wallet`, { headers: authHeader() })
+      .then(r => r.json())
+      .then(d => { setWalletBalance(d.balance ?? 0); setWalletCurrency(d.currency ?? "KES"); })
+      .catch(() => setWalletBalance(0));
+  }, []);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
 
   const startMutation = useStartDeployment({
-    mutation: { onSuccess: () => { toast({ title: "Bot starting" }); invalidate(); } },
+    mutation: { onSuccess: () => { toast({ title: "Bot starting..." }); invalidate(); } },
   });
   const stopMutation = useStopDeployment({
     mutation: { onSuccess: () => { toast({ title: "Bot stopped" }); invalidate(); } },
   });
   const restartMutation = useRestartDeployment({
-    mutation: { onSuccess: () => { toast({ title: "Bot restarting" }); invalidate(); } },
+    mutation: { onSuccess: () => { toast({ title: "Bot restarting..." }); invalidate(); } },
   });
+
+  const firstName = user?.username?.split("_")[0] ?? user?.username ?? "there";
 
   return (
     <ProtectedRoute>
       <Layout>
-        <div className="container px-4 md:px-8 py-6 md:py-8 mx-auto max-w-6xl">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6 md:mb-8 gap-3">
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h1>
-            <Button asChild size="sm" className="gap-2 flex-shrink-0">
-              <Link href="/templates">
-                <Plus className="h-4 w-4" />
-                <span className="hidden sm:inline">Deploy New Bot</span>
-                <span className="sm:hidden">Deploy</span>
-              </Link>
-            </Button>
+        <div className="container px-4 md:px-8 py-6 md:py-10 mx-auto max-w-6xl space-y-8">
+
+          {/* â”€â”€ Welcome banner â”€â”€ */}
+          <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 md:p-8">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full -translate-y-1/2 translate-x-1/4 blur-3xl pointer-events-none" />
+            <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">{getGreeting()},</p>
+                <h1 className="text-2xl md:text-3xl font-bold tracking-tight capitalize">
+                  {firstName}
+                </h1>
+                <p className="text-sm text-muted-foreground mt-2">
+                  {summary?.totalDeployments
+                    ? `You have ${summary.totalDeployments} bot${summary.totalDeployments !== 1 ? "s" : ""} deployed â€” ${summary.onlineCount} online`
+                    : "Welcome to JXHP. Deploy your first bot to get started."}
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button variant="outline" size="sm" className="gap-2" asChild>
+                  <Link href="/wallet">
+                    <Wallet className="h-4 w-4" />
+                    {walletBalance !== null ? fmt(walletBalance, walletCurrency) : "Wallet"}
+                  </Link>
+                </Button>
+                <Button size="sm" className="gap-2" asChild>
+                  <Link href="/templates">
+                    <Plus className="h-4 w-4" /> Deploy New Bot
+                  </Link>
+                </Button>
+              </div>
+            </div>
           </div>
 
           {isLoading ? (
-            <div className="flex h-64 items-center justify-center">
+            <div className="flex h-48 items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : summary ? (
-            <div className="space-y-6 md:space-y-8">
-              {/* Stats — 2 cols on mobile, 4 on desktop */}
-              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+            <>
+              {/* â”€â”€ Stat cards â”€â”€ */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                 {[
-                  { label: "Total Deployments", value: summary.totalDeployments, icon: Server, color: "text-primary" },
-                  { label: "Online", value: summary.onlineCount, icon: CheckCircle2, color: "text-emerald-500" },
-                  { label: "Offline", value: summary.offlineCount, icon: XCircle, color: "text-slate-400" },
-                  { label: "Errors", value: summary.errorCount, icon: AlertCircle, color: "text-red-500" },
-                ].map(({ label, value, icon: Icon, color }) => (
-                  <Card key={label} className="border-border/40">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-                      <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
-                      <Icon className={`h-4 w-4 ${color}`} />
-                    </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                      <div className="text-2xl md:text-3xl font-bold">{value}</div>
+                  {
+                    label: "Total Bots",
+                    value: summary.totalDeployments,
+                    icon: Bot,
+                    color: "text-primary",
+                    bg: "bg-primary/10",
+                  },
+                  {
+                    label: "Online",
+                    value: summary.onlineCount,
+                    icon: Activity,
+                    color: "text-emerald-400",
+                    bg: "bg-emerald-500/10",
+                  },
+                  {
+                    label: "Offline",
+                    value: summary.offlineCount,
+                    icon: Server,
+                    color: "text-slate-400",
+                    bg: "bg-slate-500/10",
+                  },
+                  {
+                    label: "Errors",
+                    value: summary.errorCount,
+                    icon: AlertCircle,
+                    color: "text-red-400",
+                    bg: "bg-red-500/10",
+                  },
+                ].map(({ label, value, icon: Icon, color, bg }) => (
+                  <Card key={label} className="border-border/40 hover:border-primary/20 transition-colors">
+                    <CardContent className="p-4 md:p-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                        <div className={`h-8 w-8 rounded-lg ${bg} flex items-center justify-center`}>
+                          <Icon className={`h-4 w-4 ${color}`} />
+                        </div>
+                      </div>
+                      <p className="text-2xl md:text-3xl font-bold">{value}</p>
                     </CardContent>
                   </Card>
                 ))}
               </div>
 
-              {/* Deployments */}
+              {/* â”€â”€ Wallet balance strip â”€â”€ */}
+              <Card className="border-border/40">
+                <CardContent className="p-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Wallet className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Wallet Balance</p>
+                      <p className="text-xl font-bold text-primary">
+                        {walletBalance !== null ? fmt(walletBalance, walletCurrency) : <Loader2 className="h-4 w-4 animate-spin inline" />}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" className="gap-2" asChild>
+                      <Link href="/wallet"><Plus className="h-3.5 w-3.5" /> Add Funds</Link>
+                    </Button>
+                    <Button variant="ghost" size="sm" className="gap-2 hidden sm:flex" asChild>
+                      <Link href="/wallet">History <ArrowRight className="h-3.5 w-3.5" /></Link>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* â”€â”€ Bots â”€â”€ */}
               <div>
-                <h2 className="text-lg md:text-xl font-bold mb-4">Your Bots</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold">Your Bots</h2>
+                  {summary.recentDeployments.length > 0 && (
+                    <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" asChild>
+                      <Link href="/templates"><Plus className="h-3.5 w-3.5" /> Add more</Link>
+                    </Button>
+                  )}
+                </div>
+
                 {summary.recentDeployments.length === 0 ? (
                   <Card className="border-dashed border-border/60">
-                    <CardContent className="flex flex-col items-center justify-center py-14 text-center px-4">
-                      <Terminal className="h-12 w-12 text-muted-foreground mb-4 opacity-20" />
-                      <p className="text-base font-medium">No deployments yet</p>
-                      <p className="text-sm text-muted-foreground mb-5 mt-1 max-w-xs">
-                        Start by deploying a bot from our template gallery.
+                    <CardContent className="flex flex-col items-center justify-center py-16 text-center px-4">
+                      <div className="h-16 w-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
+                        <Terminal className="h-8 w-8 text-muted-foreground/40" />
+                      </div>
+                      <p className="text-base font-semibold">No bots deployed yet</p>
+                      <p className="text-sm text-muted-foreground mt-1 mb-6 max-w-xs">
+                        Browse our template library and deploy your first Discord bot in minutes.
                       </p>
-                      <Button asChild>
-                        <Link href="/templates">Browse Templates</Link>
+                      <Button className="gap-2" asChild>
+                        <Link href="/templates"><Zap className="h-4 w-4" /> Browse Templates</Link>
                       </Button>
                     </CardContent>
                   </Card>
@@ -133,40 +243,45 @@ export default function Dashboard() {
                     {summary.recentDeployments.map((deployment) => (
                       <Card
                         key={deployment.id}
-                        className="flex flex-col border-border/40 hover:border-primary/30 transition-colors"
+                        className="flex flex-col border-border/40 hover:border-primary/25 transition-all hover:shadow-md group"
                       >
-                        <CardHeader className="pb-3 p-4">
+                        <CardHeader className="pb-3 p-5">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <CardTitle className="text-base leading-snug">
-                                <Link
-                                  href={`/deployments/${deployment.id}`}
-                                  className="hover:text-primary transition-colors truncate block"
-                                >
-                                  {deployment.botName}
-                                </Link>
-                              </CardTitle>
-                              <CardDescription className="mt-0.5 text-xs truncate">
-                                {deployment.templateName}
-                              </CardDescription>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/15 transition-colors">
+                                <Bot className="h-4 w-4 text-primary" />
+                              </div>
+                              <div className="min-w-0">
+                                <CardTitle className="text-sm leading-snug">
+                                  <Link
+                                    href={`/deployments/${deployment.id}`}
+                                    className="hover:text-primary transition-colors truncate block"
+                                  >
+                                    {deployment.botName}
+                                  </Link>
+                                </CardTitle>
+                                <CardDescription className="text-xs truncate mt-0.5">
+                                  {deployment.templateName}
+                                </CardDescription>
+                              </div>
                             </div>
                             <StatusBadge status={deployment.status} />
                           </div>
                         </CardHeader>
 
-                        <CardContent className="flex-1 px-4 pb-0">
-                          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <CardContent className="flex-1 px-5 pb-0">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
-                            {format(new Date(deployment.createdAt), "MMM d, yyyy")}
-                          </p>
+                            Deployed {format(new Date(deployment.createdAt), "MMM d, yyyy")}
+                          </div>
                         </CardContent>
 
-                        <div className="p-4 mt-3 border-t border-border/40 flex gap-2">
+                        <div className="p-4 mt-4 border-t border-border/40 flex gap-2">
                           {deployment.status === "offline" || deployment.status === "error" ? (
                             <Button
                               size="sm"
                               variant="outline"
-                              className="flex-1 gap-1.5"
+                              className="flex-1 gap-1.5 text-emerald-400 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
                               disabled={startMutation.isPending}
                               onClick={() => startMutation.mutate({ id: deployment.id })}
                             >
@@ -176,7 +291,7 @@ export default function Dashboard() {
                             <Button
                               size="sm"
                               variant="outline"
-                              className="flex-1 gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 hover:border-red-500/30"
+                              className="flex-1 gap-1.5 text-red-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30"
                               disabled={stopMutation.isPending || deployment.status !== "online"}
                               onClick={() => stopMutation.mutate({ id: deployment.id })}
                             >
@@ -192,7 +307,7 @@ export default function Dashboard() {
                           >
                             <RotateCcw className="h-3.5 w-3.5" /> Restart
                           </Button>
-                          <Button size="sm" variant="secondary" asChild className="flex-none px-3">
+                          <Button size="sm" variant="secondary" asChild className="px-3">
                             <Link href={`/deployments/${deployment.id}`}>View</Link>
                           </Button>
                         </div>
@@ -201,10 +316,41 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            </div>
+
+              {/* â”€â”€ Quick links â”€â”€ */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Card className="border-border/40 hover:border-primary/20 transition-colors group cursor-pointer" onClick={() => window.location.href = "/templates"}>
+                  <CardContent className="p-5 flex items-center gap-4">
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/20 transition-colors">
+                      <Zap className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm">Browse Templates</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Deploy a new bot from our library</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border/40 hover:border-primary/20 transition-colors group cursor-pointer" onClick={() => window.location.href = "/wallet"}>
+                  <CardContent className="p-5 flex items-center gap-4">
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/20 transition-colors">
+                      <TrendingUp className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm">Wallet & Payments</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Top up balance, view transactions</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0" />
+                  </CardContent>
+                </Card>
+              </div>
+            </>
           ) : null}
         </div>
       </Layout>
     </ProtectedRoute>
   );
 }
+
+

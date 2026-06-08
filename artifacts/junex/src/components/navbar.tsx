@@ -16,11 +16,9 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navLinks = [
+    ...(user ? [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }] : []),
     { href: "/templates", label: "Templates", icon: Grid3X3 },
-    ...(user ? [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/wallet", label: "Payments", icon: Wallet },
-    ] : []),
+    ...(user ? [{ href: "/wallet", label: "Payments", icon: Wallet }] : []),
     ...(user?.role === "admin" ? [{ href: "/admin", label: "Admin", icon: ShieldCheck }] : []),
   ];
 
@@ -35,7 +33,7 @@ export function Navbar() {
           {/* Logo */}
           <Link href="/" className="mr-6 flex items-center space-x-2 flex-shrink-0" onClick={() => setMobileOpen(false)}>
             <Terminal className="h-5 w-5 text-primary" />
-            <span className="font-bold text-sm sm:text-base">JuneXDeployment</span>
+            <span className="font-bold text-sm sm:text-base">JXHP</span>
           </Link>
 
           {/* Desktop nav links */}
@@ -105,7 +103,7 @@ export function Navbar() {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-          <div className="absolute top-16 left-0 right-0 bg-background border-b border-border/40 shadow-xl animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="absolute top-16 left-0 right-0 bg-background border-b border-border/40 shadow-xl">
             <div className="container px-4 py-4 space-y-1">
               {navLinks.map((link) => (
                 <Link
@@ -152,3 +150,4 @@ export function Navbar() {
     </>
   );
 }
+

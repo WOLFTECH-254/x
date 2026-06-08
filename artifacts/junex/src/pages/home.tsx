@@ -100,7 +100,7 @@ export default function Home() {
         <div className="rounded-2xl border border-primary/20 bg-primary/5 p-8 sm:p-12 flex flex-col items-center text-center gap-4">
           <h2 className="text-2xl sm:text-3xl font-bold">Ready to deploy your bot?</h2>
           <p className="text-muted-foreground max-w-md">
-            Join hundreds of bot developers already using JuneX. Free to start, scales with you.
+            Join hundreds of bot developers already using JuneXHostingPlatform. Free to start, scales with you.
           </p>
           <Button size="lg" className="mt-2 gap-2" asChild>
             <Link href={ctaHref}>
@@ -112,3 +112,4 @@ export default function Home() {
     </Layout>
   );
 }
+

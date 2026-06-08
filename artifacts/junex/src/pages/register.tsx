@@ -38,7 +38,7 @@ export default function Register() {
     mutation: {
       onSuccess: (data) => {
         login(data.user, data.token);
-        toast({ title: "Account created", description: "Welcome to JuneX!" });
+        toast({ title: "Account created", description: "Welcome to JXHP!" });
         navigate("/dashboard");
       },
       onError: (error: any) => {
@@ -142,3 +142,4 @@ export default function Register() {
     </Layout>
   );
 }
+
