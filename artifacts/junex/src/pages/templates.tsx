@@ -88,7 +88,7 @@ export default function Templates() {
                       </div>
                       <h3 className="font-semibold text-sm leading-snug truncate">{template.name}</h3>
                     </div>
-                    {template.isFree ? (
+                    {(template.isFree || template.price === 0) ? (
                       <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/20 gap-1 flex-shrink-0 text-xs">
                         <Gift className="h-3 w-3" /> Free
                       </Badge>
@@ -134,4 +134,5 @@ export default function Templates() {
     </Layout>
   );
 }
+
 
