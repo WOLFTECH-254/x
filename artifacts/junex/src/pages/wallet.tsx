@@ -171,6 +171,31 @@ export default function WalletPage() {
     }
   }
 
+  function startPolling(ref: string) {
+    let attempts = 0;
+    const maxAttempts = 24; // 2 min max
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`${API_BASE}/api/wallet/verify/${ref}`, { headers: authHeader() });
+        const d = await res.json();
+        if (d.status === "success") {
+          clearInterval(interval);
+          toast({ title: `Payment confirmed! Balance updated.` });
+          setStep("done");
+          fetchWallet();
+        } else if (d.status === "failed") {
+          clearInterval(interval);
+          toast({ title: "Payment failed. Please try again.", variant: "destructive" });
+          resetDeposit();
+        }
+      } catch {}
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 5000);
+  }
+
   async function handleVerify() {
     if (!reference) return;
     setIsVerifying(true);
@@ -557,3 +582,4 @@ export default function WalletPage() {
     </Layout>
   );
 }
+

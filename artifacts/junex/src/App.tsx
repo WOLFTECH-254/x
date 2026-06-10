@@ -18,6 +18,9 @@ import AdminDashboard from "@/pages/admin-dashboard";
 import AdminTemplateNew from "@/pages/admin-template-new";
 import OAuthCallback from "@/pages/oauth-callback";
 import WalletPage from "@/pages/wallet";
+import DevelopersPage from "@/pages/developers";
+import AdminDevelopers from "@/pages/admin-developers";
+import MyBotsPage from "@/pages/my-bots";
 
 setBaseUrl("http://localhost:8080");
 
@@ -26,15 +29,16 @@ const queryClient = new QueryClient();
 function Router() {
   return (
     <Switch>
-      {/* Public */}
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/oauth-callback" component={OAuthCallback} />
-
-      {/* Protected user routes */}
+      <Route path="/developers" component={DevelopersPage} />
       <Route path="/dashboard">
         <ProtectedRoute><Dashboard /></ProtectedRoute>
+      </Route>
+      <Route path="/my-bots">
+        <ProtectedRoute><MyBotsPage /></ProtectedRoute>
       </Route>
       <Route path="/templates">
         <ProtectedRoute><Templates /></ProtectedRoute>
@@ -48,15 +52,15 @@ function Router() {
       <Route path="/wallet">
         <ProtectedRoute><WalletPage /></ProtectedRoute>
       </Route>
-
-      {/* Admin only */}
       <Route path="/admin">
         <ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>
       </Route>
       <Route path="/admin/templates/new">
         <ProtectedRoute adminOnly><AdminTemplateNew /></ProtectedRoute>
       </Route>
-
+      <Route path="/admin/developers">
+        <ProtectedRoute adminOnly><AdminDevelopers /></ProtectedRoute>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -80,4 +84,3 @@ function App() {
 }
 
 export default App;
-

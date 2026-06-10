@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Link } from "wouter";
 import { ProtectedRoute } from "@/components/protected-route";
 import { Layout } from "@/components/layout";
@@ -54,6 +54,7 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
+  UserCircle2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -200,12 +201,13 @@ export default function AdminDashboard() {
             </div>
 
             {/* Quick Action Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {[
                 { label: "Add Template", icon: Plus, href: "/admin/templates/new", color: "text-primary" },
                 { label: "View Deployments", icon: Eye, action: () => setActiveTab("deployments"), color: "text-blue-500" },
                 { label: "Manage Users", icon: Users, action: () => setActiveTab("users"), color: "text-emerald-500" },
                 { label: "Platform Health", icon: Zap, action: () => {}, color: "text-amber-500" },
+                { label: "Manage Team", icon: UserCircle2, href: "/admin/developers", color: "text-purple-400" },
               ].map((item) => (
                 item.href ? (
                   <Link key={item.label} href={item.href}>
@@ -260,7 +262,7 @@ export default function AdminDashboard() {
                 </TabsTrigger>
               </TabsList>
 
-              {/* ─── Templates Tab ─── */}
+              {/* Templates Tab */}
               <TabsContent value="templates" className="mt-6">
                 {isLoadingTemplates ? (
                   <div className="flex h-40 items-center justify-center">
@@ -395,7 +397,7 @@ export default function AdminDashboard() {
                 )}
               </TabsContent>
 
-              {/* ─── Deployments Tab ─── */}
+              {/* Deployments Tab */}
               <TabsContent value="deployments" className="mt-6">
                 <Card className="border-border/40">
                   <CardHeader className="pb-4">
@@ -511,7 +513,7 @@ export default function AdminDashboard() {
                 </Card>
               </TabsContent>
 
-              {/* ─── Users Tab ─── */}
+              {/* Users Tab */}
               <TabsContent value="users" className="mt-6">
                 <Card className="border-border/40">
                   <CardHeader className="pb-4">

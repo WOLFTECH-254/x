@@ -453,4 +453,43 @@ router.patch("/deployments/:id/env", requireAuth, async (req, res): Promise<void
   res.json(formatDeployment(updated, row.templateName ?? "Unknown"));
 });
 
+
+// â”€â”€ Live logs from Heroku â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.get("/deployments/:id/heroku-logs", requireAuth, async (req, res): Promise<void> => {
+  const user = (req as any).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [deployment] = await db
+    .select()
+    .from(deploymentsTable)
+    .where(and(eq(deploymentsTable.id, id), eq(deploymentsTable.userId, user.id)));
+
+  if (!deployment) { res.status(404).json({ error: "Not found" }); return; }
+  if (!deployment.herokuAppId) { res.status(400).json({ error: "Bot not yet deployed to Heroku" }); return; }
+
+  if (!HEROKU_API_KEY) { res.status(500).json({ error: "Heroku not configured" }); return; }
+
+  try {
+    // Get a log session from Heroku
+    const sessionRes = await fetch(`${HEROKU_BASE}/apps/${deployment.herokuAppId}/log-sessions`, {
+      method: "POST",
+      headers: herokuHeaders(),
+      body: JSON.stringify({ lines: 100, tail: false }),
+    });
+    const sessionData = await sessionRes.json() as any;
+    if (!sessionRes.ok) { res.status(400).json({ error: sessionData.message ?? "Could not fetch logs" }); return; }
+
+    // Fetch the actual log content
+    const logsRes = await fetch(sessionData.logplex_url);
+    const logsText = await logsRes.text();
+    const lines = logsText.split("\n").filter(Boolean);
+
+    res.json({ lines, herokuAppId: deployment.herokuAppId });
+  } catch (err) {
+    logger.error({ err }, "Heroku logs error");
+    res.status(500).json({ error: "Failed to fetch Heroku logs" });
+  }
+});
 export default router;
+

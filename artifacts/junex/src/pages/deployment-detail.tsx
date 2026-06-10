@@ -100,12 +100,28 @@ export default function DeploymentDetail() {
   useEffect(() => {
     if (!id || isNaN(id)) return;
 
+    async function fetchHerokuLogs() {
+      try {
+        const res = await fetch(`${API_BASE}/api/deployments/${id}/heroku-logs`, { headers: authHeader() });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.lines as string[];
+      } catch { return null; }
+    }
+
     async function fetchLogs() {
       try {
         const res = await fetch(`${API_BASE}/api/deployments/${id}/logs`, { headers: authHeader() });
         if (!res.ok) return;
         const data = await res.json();
-        const lines: string[] = data.lines ?? [];
+        let lines: string[] = data.lines ?? [];
+        // For online bots, also fetch live Heroku logs
+        if (data.status === "online") {
+          const herokuLines = await fetchHerokuLogs();
+          if (herokuLines && herokuLines.length > 0) {
+            lines = [...lines, "", "-- Live Heroku Logs --", ...herokuLines];
+          }
+        }
         setLogs(lines);
         setDeployStatus(data.status ?? "building");
 
@@ -369,3 +385,4 @@ export default function DeploymentDetail() {
     </Layout>
   );
 }
+

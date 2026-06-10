@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useGetTemplate, useCreateDeployment } from "@workspace/api-client-react";
 import {
-  Loader2, Github, ArrowLeft, Bot, Zap, Lock,
+  Loader2, Github, ArrowLeft, Bot, Users, Zap, Lock,
   KeyRound, CreditCard, CheckCircle2, Gift, Wallet, AlertCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -139,13 +139,36 @@ export default function TemplateDetail() {
 
         {/* Header */}
         <div className="flex items-start gap-4 mb-6">
-          <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <Bot className="h-7 w-7 text-primary" />
+          <div className="h-16 w-16 rounded-xl overflow-hidden flex-shrink-0 border border-border/40">
+            {template.thumbnail ? (
+              <img src={template.thumbnail} alt={template.name}
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            ) : (
+              <div className="h-full w-full bg-primary/10 flex items-center justify-center">
+                <Bot className="h-8 w-8 text-primary" />
+              </div>
+            )}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold">{template.name}</h1>
               <Badge variant="secondary">{template.category}</Badge>
+              {(template as any).deployCount > 0 && (
+                <Badge variant="outline" className="gap-1 text-xs">
+                  <Users className="h-3 w-3" /> {(template as any).deployCount} deployed
+                </Badge>
+              )}
+              {(template as any).deployCount > 0 && (
+                <Badge variant="outline" className="gap-1 text-xs">
+                  <Users className="h-3 w-3" /> {(template as any).deployCount} deployed
+                </Badge>
+              )}
+              {(template as any).deployCount > 0 && (
+                <Badge variant="outline" className="gap-1 text-xs">
+                  <Users className="h-3 w-3" /> {(template as any).deployCount} deployed
+                </Badge>
+              )}
               {template.isFree ? (
                 <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 gap-1">
                   <Gift className="h-3 w-3" /> Free
@@ -276,3 +299,8 @@ export default function TemplateDetail() {
     </Layout>
   );
 }
+
+
+
+
+

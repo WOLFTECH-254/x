@@ -1,11 +1,11 @@
 ﻿import { Router, type IRouter } from "express";
-import { db, templatesTable } from "@workspace/db";
-import { eq, ilike, and, or } from "drizzle-orm";
+import { db, templatesTable, deploymentsTable } from "@workspace/db";
+import { eq, ilike, and, or, sql } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../lib/auth";
 
 const router: IRouter = Router();
 
-function formatTemplate(t: typeof templatesTable.$inferSelect) {
+function formatTemplate(t: typeof templatesTable.$inferSelect, deployCount = 0) {
   return {
     id: t.id,
     name: t.name,
@@ -18,6 +18,7 @@ function formatTemplate(t: typeof templatesTable.$inferSelect) {
     price: t.price ?? 0,
     currency: t.currency ?? "KES",
     pairSiteUrl: t.pairSiteUrl ?? null,
+    deployCount,
     createdAt: t.createdAt,
   };
 }
@@ -30,7 +31,15 @@ router.get("/templates", async (req, res): Promise<void> => {
   if (category) conditions.push(eq(templatesTable.category, category));
   if (conditions.length > 0) query = query.where(and(...conditions));
   const templates = await query;
-  res.json(templates.map(formatTemplate));
+
+  // Get deploy counts for all templates
+  const counts = await db
+    .select({ templateId: deploymentsTable.templateId, count: sql<number>`count(*)::int` })
+    .from(deploymentsTable)
+    .groupBy(deploymentsTable.templateId);
+  const countMap = Object.fromEntries(counts.map(c => [c.templateId, c.count]));
+
+  res.json(templates.map(t => formatTemplate(t, countMap[t.id] ?? 0)));
 });
 
 router.get("/templates/categories", async (_req, res): Promise<void> => {
@@ -94,3 +103,6 @@ router.delete("/templates/:id", requireAdmin, async (req, res): Promise<void> =>
 });
 
 export default router;
+
+
+
