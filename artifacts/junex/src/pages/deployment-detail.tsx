@@ -4,35 +4,35 @@ import { Layout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
-  useGetDeployment,
-  useStartDeployment,
-  useStopDeployment,
-  useRestartDeployment,
-  useDeleteDeployment,
-  useUpdateDeploymentEnv,
+  useGetDeployment, useStartDeployment, useStopDeployment,
+  useRestartDeployment, useDeleteDeployment,
   getGetDeploymentQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, Terminal, Play, Square, RotateCcw, Trash2,
-  ArrowLeft, Save, CheckCircle2, Bot, ExternalLink,
+  ArrowLeft, Save, CheckCircle2, AlertCircle, Bot,
+  ExternalLink, RefreshCw, KeyRound,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 const API_BASE = "http://localhost:8080";
 
 function authHeader() {
   const token = localStorage.getItem("junex_token");
-  return { Authorization: `Bearer ${token}` };
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -41,15 +41,14 @@ function StatusBadge({ status }: { status: string }) {
     offline:   "bg-slate-500/15 text-slate-400 border-slate-500/20",
     error:     "bg-red-500/15 text-red-400 border-red-500/20",
     building:  "bg-blue-500/15 text-blue-400 border-blue-500/20",
-    queued:    "bg-amber-500/15 text-amber-400 border-amber-500/20",
     suspended: "bg-red-500/15 text-red-400 border-red-500/20",
+    queued:    "bg-amber-500/15 text-amber-400 border-amber-500/20",
   };
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cfg[status] ?? cfg.offline}`}>
-      {status === "building"
-        ? <Loader2 className="h-3 w-3 animate-spin" />
-        : <span className={`h-1.5 w-1.5 rounded-full ${status === "online" ? "bg-emerald-400 animate-pulse" : "bg-current opacity-60"}`} />
-      }
+      {status === "building" ? <Loader2 className="h-3 w-3 animate-spin" /> :
+       status === "online" ? <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> :
+       <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
       {status}
     </span>
   );
@@ -57,12 +56,17 @@ function StatusBadge({ status }: { status: string }) {
 
 function LogLine({ line }: { line: string }) {
   if (!line || line.trim() === "") return <div className="h-2" />;
-  const isError   = line.includes("ERROR") || line.includes("FATAL");
-  const isSuccess = line.includes("successful") || line.includes("online") || line.includes("succeeded") || line.includes("started") || line.includes("complete");
-  const isWarning = line.includes("WARNING");
+  const isError   = line.includes("ERROR") || line.includes("FATAL") || line.includes("error");
+  const isSuccess = line.includes("successful") || line.includes("succeeded") || line.includes("deployed") || line.includes("live");
+  const isWarning = line.includes("WARNING") || line.includes("warn");
+  const isDivider = line.includes("--");
   return (
     <div className={`font-mono text-xs leading-6 px-1 ${
-      isError ? "text-red-400" : isSuccess ? "text-emerald-400 font-medium" : isWarning ? "text-amber-400" : "text-slate-300"
+      isError ? "text-red-400" :
+      isSuccess ? "text-emerald-400 font-medium" :
+      isWarning ? "text-amber-400" :
+      isDivider ? "text-slate-500 italic" :
+      "text-slate-300"
     }`}>
       {line}
     </div>
@@ -79,82 +83,118 @@ export default function DeploymentDetail() {
 
   const [logs, setLogs] = useState<string[]>([]);
   const [deployStatus, setDeployStatus] = useState("building");
-  const [redirecting, setRedirecting] = useState(false);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
+  const [isSavingEnv, setIsSavingEnv] = useState(false);
+  const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
 
-  // Fetch deployment info
   const { data: deployment, isLoading } = useGetDeployment(id);
 
   useEffect(() => {
-    if (deployment?.envVars) {
-      setEnvVars(deployment.envVars as Record<string, string>);
-    }
-    if (deployment?.status) {
-      setDeployStatus(deployment.status);
-    }
+    if (deployment?.envVars) setEnvVars(deployment.envVars as Record<string, string>);
+    if (deployment?.status) setDeployStatus(deployment.status);
   }, [deployment]);
 
-  // Poll logs every 2.5s
+  // Poll logs every 3s while building, every 30s when online
   useEffect(() => {
     if (!id || isNaN(id)) return;
-
-    async function fetchHerokuLogs() {
-      try {
-        const res = await fetch(`${API_BASE}/api/deployments/${id}/heroku-logs`, { headers: authHeader() });
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data.lines as string[];
-      } catch { return null; }
-    }
 
     async function fetchLogs() {
       try {
         const res = await fetch(`${API_BASE}/api/deployments/${id}/logs`, { headers: authHeader() });
         if (!res.ok) return;
         const data = await res.json();
-        let lines: string[] = data.lines ?? [];
-        // For online bots, also fetch live Heroku logs
-        if (data.status === "online") {
-          const herokuLines = await fetchHerokuLogs();
-          if (herokuLines && herokuLines.length > 0) {
-            lines = [...lines, "", "-- Live Heroku Logs --", ...herokuLines];
-          }
-        }
+        const lines: string[] = data.lines ?? [];
         setLogs(lines);
         setDeployStatus(data.status ?? "building");
 
-        // Check if done and redirect
-        if (data.status === "online" && !redirecting) {
-          const last = lines.at(-1) ?? "";
-          if (last.includes("Redirecting") || last.includes("successful") || last.includes("live")) {
-            setRedirecting(true);
-            setTimeout(() => setLocation("/dashboard"), 3000);
-          }
+        // Fetch live Heroku logs if online
+        if (data.status === "online") {
+          try {
+            const hRes = await fetch(`${API_BASE}/api/deployments/${id}/heroku-logs`, { headers: authHeader() });
+            if (hRes.ok) {
+              const hData = await hRes.json();
+              if (hData.lines?.length > 0) {
+                setLogs([...lines, "", "-- Live Heroku Logs --", ...hData.lines]);
+              }
+            }
+          } catch {}
         }
       } catch {}
     }
 
     fetchLogs();
-    const interval = setInterval(fetchLogs, 2500);
+    const isBuilding = deployStatus === "building";
+    const interval = setInterval(fetchLogs, isBuilding ? 3000 : 30000);
     return () => clearInterval(interval);
-  }, [id, redirecting]);
+  }, [id, deployStatus]);
 
-  // Auto-scroll
+  // Auto scroll
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getGetDeploymentQueryKey(id) });
 
-  const startMutation   = useStartDeployment({ mutation: { onSuccess: () => { toast({ title: "Bot starting..." }); invalidate(); } } });
-  const stopMutation    = useStopDeployment({ mutation: { onSuccess: () => { toast({ title: "Bot stopped" }); invalidate(); } } });
+  const startMutation = useStartDeployment({ mutation: { onSuccess: () => { toast({ title: "Bot starting..." }); invalidate(); } } });
+  const stopMutation = useStopDeployment({ mutation: { onSuccess: () => { toast({ title: "Bot stopped" }); invalidate(); } } });
   const restartMutation = useRestartDeployment({ mutation: { onSuccess: () => { toast({ title: "Bot restarting..." }); invalidate(); } } });
-  const deleteMutation  = useDeleteDeployment({ mutation: { onSuccess: () => { toast({ title: "Deployment deleted" }); setLocation("/dashboard"); } } });
-  const updateEnvMutation = useUpdateDeploymentEnv({ mutation: { onSuccess: () => toast({ title: "Environment variables saved" }) } });
+  const deleteMutation = useDeleteDeployment({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "Bot deleted from JXHP and Heroku" });
+        setLocation("/my-bots");
+      },
+    },
+  });
 
-  const isBuilding = deployStatus === "building";
+  async function handleRefreshLogs() {
+    setIsRefreshingLogs(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/deployments/${id}/heroku-logs`, { headers: authHeader() });
+      if (res.ok) {
+        const data = await res.json();
+        const deployRes = await fetch(`${API_BASE}/api/deployments/${id}/logs`, { headers: authHeader() });
+        const deployData = await deployRes.json();
+        setLogs([...(deployData.lines ?? []), "", "-- Live Heroku Logs --", ...(data.lines ?? [])]);
+        toast({ title: "Logs refreshed" });
+      }
+    } catch { toast({ title: "Could not refresh logs", variant: "destructive" }); }
+    finally { setIsRefreshingLogs(false); }
+  }
+
+  async function handleSaveEnv() {
+    setIsSavingEnv(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/deployments/${id}/env`, {
+        method: "PATCH",
+        headers: authHeader(),
+        body: JSON.stringify({ envVars }),
+      });
+      if (!res.ok) { toast({ title: "Failed to save", variant: "destructive" }); return; }
+      toast({ title: "Configuration saved and pushed to Heroku" });
+    } catch { toast({ title: "Failed to save", variant: "destructive" }); }
+    finally { setIsSavingEnv(false); }
+  }
+
+  async function handleSaveAndRestart() {
+    setIsSavingEnv(true);
+    try {
+      // Save env vars first
+      const res = await fetch(`${API_BASE}/api/deployments/${id}/env`, {
+        method: "PATCH",
+        headers: authHeader(),
+        body: JSON.stringify({ envVars }),
+      });
+      if (!res.ok) { toast({ title: "Failed to save config", variant: "destructive" }); return; }
+      // Then restart
+      await fetch(`${API_BASE}/api/deployments/${id}/restart`, { method: "POST", headers: authHeader() });
+      toast({ title: "Configuration saved and bot restarted on Heroku!" });
+      invalidate();
+    } catch { toast({ title: "Failed", variant: "destructive" }); }
+    finally { setIsSavingEnv(false); }
+  }
 
   if (isLoading) {
     return (
@@ -171,11 +211,13 @@ export default function DeploymentDetail() {
       <Layout>
         <div className="container py-20 text-center">
           <p className="text-muted-foreground">Deployment not found.</p>
-          <Button variant="link" asChild><Link href="/dashboard">Back to Dashboard</Link></Button>
+          <Button variant="link" asChild><Link href="/my-bots">Back to My Bots</Link></Button>
         </div>
       </Layout>
     );
   }
+
+  const isBuilding = deployStatus === "building";
 
   return (
     <Layout>
@@ -185,7 +227,7 @@ export default function DeploymentDetail() {
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" asChild>
-              <Link href="/dashboard"><ArrowLeft className="h-5 w-5" /></Link>
+              <Link href="/my-bots"><ArrowLeft className="h-5 w-5" /></Link>
             </Button>
             <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
               <Bot className="h-5 w-5 text-primary" />
@@ -197,7 +239,6 @@ export default function DeploymentDetail() {
               </p>
             </div>
           </div>
-
           <div className="flex items-center gap-2 flex-shrink-0">
             <StatusBadge status={deployStatus} />
             {deployment.herokuAppId && (
@@ -211,25 +252,12 @@ export default function DeploymentDetail() {
         </div>
 
         {/* Building banner */}
-        {isBuilding && !redirecting && (
+        {isBuilding && (
           <div className="flex items-center gap-3 p-4 rounded-xl border border-blue-500/30 bg-blue-500/5">
             <Loader2 className="h-5 w-5 text-blue-400 animate-spin flex-shrink-0" />
             <div>
               <p className="text-sm font-medium text-blue-400">Deployment in progress</p>
-              <p className="text-xs text-muted-foreground">
-                Your bot is being deployed to Heroku. This usually takes 2-5 minutes. You will be redirected automatically when complete.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Success banner */}
-        {redirecting && (
-          <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-emerald-400">Deployment complete!</p>
-              <p className="text-xs text-muted-foreground">Redirecting you to your dashboard...</p>
+              <p className="text-xs text-muted-foreground">Your bot is being deployed to Heroku. This usually takes 2-5 minutes.</p>
             </div>
           </div>
         )}
@@ -237,11 +265,15 @@ export default function DeploymentDetail() {
         {/* Error banner */}
         {deployStatus === "error" && (
           <div className="flex items-center gap-3 p-4 rounded-xl border border-red-500/30 bg-red-500/5">
-            <div className="h-5 w-5 text-red-400 flex-shrink-0">!</div>
-            <div>
+            <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0" />
+            <div className="flex-1">
               <p className="text-sm font-medium text-red-400">Deployment failed</p>
-              <p className="text-xs text-muted-foreground">Check the logs below for details. You may retry from the templates page.</p>
+              <p className="text-xs text-muted-foreground">Check the logs below. You can edit your configuration and restart.</p>
             </div>
+            <Button size="sm" variant="outline" className="gap-1.5 flex-shrink-0 border-red-500/30 text-red-400 hover:bg-red-500/10"
+              onClick={() => startMutation.mutate({ id })}>
+              <Play className="h-3.5 w-3.5" /> Retry
+            </Button>
           </div>
         )}
 
@@ -251,14 +283,14 @@ export default function DeploymentDetail() {
               <TabsTrigger value="logs" className="gap-2">
                 <Terminal className="h-4 w-4" /> Logs
               </TabsTrigger>
-              <TabsTrigger value="settings" disabled={isBuilding}>
-                Settings
+              <TabsTrigger value="config" className="gap-2">
+                <KeyRound className="h-4 w-4" /> Configuration
               </TabsTrigger>
             </TabsList>
 
             {!isBuilding && (
               <div className="flex gap-2">
-                {deployStatus === "offline" || deployStatus === "error" ? (
+                {deployStatus === "offline" || deployStatus === "error" || deployStatus === "suspended" ? (
                   <Button size="sm" variant="outline" className="gap-1.5 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
                     disabled={startMutation.isPending} onClick={() => startMutation.mutate({ id })}>
                     <Play className="h-3.5 w-3.5" /> Start
@@ -277,16 +309,25 @@ export default function DeploymentDetail() {
             )}
           </div>
 
-          {/* â”€â”€ Logs â”€â”€ */}
+          {/* â”€â”€ Logs Tab â”€â”€ */}
           <TabsContent value="logs" className="mt-4">
             <Card className="border-border/40">
               <CardHeader className="py-3 px-4 border-b border-border/40 flex flex-row items-center gap-2 space-y-0">
                 <Terminal className="h-4 w-4 text-primary" />
-                <CardTitle className="text-sm font-medium">Live Deployment Logs</CardTitle>
+                <CardTitle className="text-sm font-medium flex-1">
+                  {isBuilding ? "Deployment Logs" : "Live Bot Logs"}
+                </CardTitle>
                 {isBuilding && (
-                  <span className="ml-auto flex items-center gap-1.5 text-xs text-blue-400">
+                  <span className="flex items-center gap-1.5 text-xs text-blue-400">
                     <Loader2 className="h-3 w-3 animate-spin" /> streaming
                   </span>
+                )}
+                {!isBuilding && (
+                  <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs text-muted-foreground"
+                    onClick={handleRefreshLogs} disabled={isRefreshingLogs}>
+                    <RefreshCw className={`h-3 w-3 ${isRefreshingLogs ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
                 )}
               </CardHeader>
               <CardContent className="p-0">
@@ -310,49 +351,83 @@ export default function DeploymentDetail() {
             </Card>
           </TabsContent>
 
-          {/* â”€â”€ Settings â”€â”€ */}
-          <TabsContent value="settings" className="mt-4 space-y-5">
+          {/* â”€â”€ Configuration Tab â”€â”€ */}
+          <TabsContent value="config" className="mt-4 space-y-5">
             <Card className="border-border/40">
               <CardHeader>
-                <CardTitle className="text-base">Environment Variables</CardTitle>
-                <CardDescription>Changes are pushed to Heroku and require a restart.</CardDescription>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-primary" /> Environment Variables
+                </CardTitle>
+                <CardDescription>
+                  Edit your bot configuration below. Changes are pushed directly to Heroku.
+                  Use "Save & Restart" to apply changes immediately.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
+                {Object.entries(envVars).length === 0 && (
+                  <p className="text-sm text-muted-foreground italic">No environment variables set.</p>
+                )}
                 {Object.entries(envVars).map(([key, val]) => (
                   <div key={key} className="flex items-center gap-2">
-                    <Input value={key} readOnly className="w-1/3 bg-muted font-mono text-xs" />
-                    <Input value={val} type="password"
+                    <div className="w-1/3 flex-shrink-0">
+                      <div className="bg-muted border border-border/40 rounded-md px-3 py-2 font-mono text-xs text-primary">
+                        {key}
+                      </div>
+                    </div>
+                    <Input
+                      value={val}
                       onChange={(e) => setEnvVars({ ...envVars, [key]: e.target.value })}
-                      className="flex-1 font-mono text-xs" />
-                    <Button variant="ghost" size="icon" className="text-destructive flex-shrink-0"
+                      className="flex-1 font-mono text-xs"
+                      placeholder={`Value for ${key}`}
+                    />
+                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0"
                       onClick={() => { const n = { ...envVars }; delete n[key]; setEnvVars(n); }}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 pt-3 border-t border-border/40">
-                  <Input placeholder="KEY" value={newKey} onChange={(e) => setNewKey(e.target.value)} className="w-1/3 font-mono text-xs" />
-                  <Input placeholder="VALUE" value={newVal} onChange={(e) => setNewVal(e.target.value)} className="flex-1 font-mono text-xs" />
-                  <Button variant="secondary" onClick={() => {
-                    if (newKey && newVal) { setEnvVars({ ...envVars, [newKey]: newVal }); setNewKey(""); setNewVal(""); }
-                  }}>Add</Button>
+
+                {/* Add new variable */}
+                <Separator className="my-2" />
+                <p className="text-xs font-medium text-muted-foreground">Add new variable</p>
+                <div className="flex items-center gap-2">
+                  <Input placeholder="KEY" value={newKey}
+                    onChange={(e) => setNewKey(e.target.value.toUpperCase())}
+                    className="w-1/3 font-mono text-xs flex-shrink-0" />
+                  <Input placeholder="VALUE" value={newVal}
+                    onChange={(e) => setNewVal(e.target.value)}
+                    className="flex-1 font-mono text-xs" />
+                  <Button variant="secondary" size="sm" className="flex-shrink-0"
+                    onClick={() => {
+                      if (newKey && newVal) {
+                        setEnvVars({ ...envVars, [newKey]: newVal });
+                        setNewKey(""); setNewVal("");
+                      }
+                    }}>
+                    Add
+                  </Button>
                 </div>
               </CardContent>
-              <CardFooter className="border-t border-border/40 justify-between py-4">
-                <p className="text-xs text-muted-foreground">Encrypted at rest</p>
-                <Button size="sm" className="gap-2"
-                  onClick={() => updateEnvMutation.mutate({ id, data: { envVars } })}
-                  disabled={updateEnvMutation.isPending}>
-                  {updateEnvMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Save
-                </Button>
+              <CardFooter className="border-t border-border/40 justify-between py-4 gap-3 flex-wrap">
+                <p className="text-xs text-muted-foreground">Variables are encrypted and stored securely on Heroku.</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="gap-2" onClick={handleSaveEnv} disabled={isSavingEnv}>
+                    {isSavingEnv ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Save Only
+                  </Button>
+                  <Button size="sm" className="gap-2" onClick={handleSaveAndRestart} disabled={isSavingEnv}>
+                    {isSavingEnv ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    Save & Restart
+                  </Button>
+                </div>
               </CardFooter>
             </Card>
 
+            {/* Danger Zone */}
             <Card className="border-destructive/30">
               <CardHeader>
                 <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
-                <CardDescription>Permanently deletes this deployment and its Heroku app.</CardDescription>
+                <CardDescription>Permanently deletes this bot from JXHP and Heroku. Cannot be undone.</CardDescription>
               </CardHeader>
               <CardContent>
                 <AlertDialog>
@@ -365,14 +440,14 @@ export default function DeploymentDetail() {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete {deployment.botName}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This permanently deletes the bot and its Heroku app. Cannot be undone.
+                        This permanently deletes the bot from JXHP and removes the Heroku app. Cannot be undone.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction className="bg-destructive text-destructive-foreground"
                         onClick={() => deleteMutation.mutate({ id })}>
-                        Yes, delete
+                        Yes, Delete
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -385,4 +460,3 @@ export default function DeploymentDetail() {
     </Layout>
   );
 }
-

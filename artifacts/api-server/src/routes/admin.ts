@@ -1,10 +1,16 @@
 ﻿import { Router, type IRouter } from "express";
-import { db, deploymentsTable, templatesTable, usersTable, paymentsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { db, deploymentsTable, templatesTable, usersTable, paymentsTable, walletTransactionsTable } from "@workspace/db";
+import { eq, desc, sql } from "drizzle-orm";
 import { requireAdmin } from "../lib/auth";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+const HEROKU_BASE = "https://api.heroku.com";
+const HEROKU_API_KEY = process.env.HEROKU_API_KEY ?? "";
+
+function herokuHeaders() {
+  return { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: "application/vnd.heroku+json; version=3", "Content-Type": "application/json" };
+}
 
 function formatTemplate(t: typeof templatesTable.$inferSelect) {
   return {
@@ -17,6 +23,7 @@ function formatTemplate(t: typeof templatesTable.$inferSelect) {
   };
 }
 
+// â”€â”€ Stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/admin/stats", requireAdmin, async (_req, res): Promise<void> => {
   const users = await db.select().from(usersTable);
   const deployments = await db.select().from(deploymentsTable);
@@ -25,47 +32,203 @@ router.get("/admin/stats", requireAdmin, async (_req, res): Promise<void> => {
   const onlineDeployments = deployments.filter(d => d.status === "online").length;
   const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
   res.json({
-    totalUsers: users.length, totalDeployments: deployments.length,
-    onlineDeployments, totalTemplates: templates.length,
+    totalUsers: users.length,
+    suspendedUsers: users.filter(u => u.suspended).length,
+    totalDeployments: deployments.length,
+    onlineDeployments,
+    errorDeployments: deployments.filter(d => d.status === "error").length,
+    totalTemplates: templates.length,
     totalRevenue, totalPayments: payments.length,
   });
 });
 
+// â”€â”€ List users â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/admin/users", requireAdmin, async (_req, res): Promise<void> => {
   const users = await db.select().from(usersTable).orderBy(usersTable.createdAt);
-  res.json(users.map(u => ({ id: u.id, username: u.username, email: u.email, role: u.role, createdAt: u.createdAt })));
-});
-
-router.get("/admin/deployments", requireAdmin, async (_req, res): Promise<void> => {
-  const rows = await db
-    .select({ deployment: deploymentsTable, templateName: templatesTable.name })
-    .from(deploymentsTable)
-    .leftJoin(templatesTable, eq(deploymentsTable.templateId, templatesTable.id))
-    .orderBy(deploymentsTable.createdAt);
-  res.json(rows.map(r => ({
-    id: r.deployment.id, userId: r.deployment.userId, templateId: r.deployment.templateId,
-    templateName: r.templateName ?? "Unknown", botName: r.deployment.botName,
-    herokuAppId: r.deployment.herokuAppId ?? null, status: r.deployment.status,
-    createdAt: r.deployment.createdAt, updatedAt: r.deployment.updatedAt,
+  res.json(users.map(u => ({
+    id: u.id, username: u.username, email: u.email,
+    role: u.role, suspended: u.suspended ?? false,
+    walletBalance: u.walletBalance ?? 0, createdAt: u.createdAt,
   })));
 });
 
-router.get("/admin/payments", requireAdmin, async (_req, res): Promise<void> => {
-  const rows = await db
-    .select({ payment: paymentsTable, templateName: templatesTable.name, username: usersTable.username, email: usersTable.email })
-    .from(paymentsTable)
-    .leftJoin(templatesTable, eq(paymentsTable.templateId, templatesTable.id))
-    .leftJoin(usersTable, eq(paymentsTable.userId, usersTable.id))
-    .orderBy(desc(paymentsTable.createdAt));
-  res.json(rows.map(r => ({ ...r.payment, templateName: r.templateName ?? "Unknown", username: r.username ?? "Unknown", email: r.email ?? "Unknown" })));
+// â”€â”€ Suspend user â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.post("/admin/users/:id/suspend", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [user] = await db.update(usersTable).set({ suspended: true }).where(eq(usersTable.id, id)).returning();
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  // Also suspend all their Heroku deployments
+  const deployments = await db.select().from(deploymentsTable).where(eq(deploymentsTable.userId, id));
+  for (const dep of deployments) {
+    if (dep.herokuAppId && HEROKU_API_KEY) {
+      await fetch(`${HEROKU_BASE}/apps/${dep.herokuAppId}/formation`, {
+        method: "PATCH", headers: herokuHeaders(),
+        body: JSON.stringify({ updates: [{ type: "worker", quantity: 0 }] }),
+      }).catch(() => {});
+    }
+    await db.update(deploymentsTable).set({ status: "suspended" }).where(eq(deploymentsTable.id, dep.id));
+  }
+
+  res.json({ id: user.id, username: user.username, suspended: true, message: "User suspended and all bots stopped" });
 });
 
-// â”€â”€ Edit template (admin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Unsuspend user â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.post("/admin/users/:id/unsuspend", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [user] = await db.update(usersTable).set({ suspended: false }).where(eq(usersTable.id, id)).returning();
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+  res.json({ id: user.id, username: user.username, suspended: false, message: "User unsuspended" });
+});
+
+// â”€â”€ Delete user â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.delete("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  // Delete all their Heroku apps first
+  const deployments = await db.select().from(deploymentsTable).where(eq(deploymentsTable.userId, id));
+  for (const dep of deployments) {
+    if (dep.herokuAppId && HEROKU_API_KEY) {
+      await fetch(`${HEROKU_BASE}/apps/${dep.herokuAppId}`, {
+        method: "DELETE", headers: herokuHeaders(),
+      }).catch(() => {});
+    }
+  }
+
+  // Delete user (cascades to deployments, payments, wallet)
+  await db.delete(usersTable).where(eq(usersTable.id, id));
+  res.sendStatus(204);
+});
+
+// â”€â”€ List deployments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.get("/admin/deployments", requireAdmin, async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({ deployment: deploymentsTable, templateName: templatesTable.name, username: usersTable.username })
+    .from(deploymentsTable)
+    .leftJoin(templatesTable, eq(deploymentsTable.templateId, templatesTable.id))
+    .leftJoin(usersTable, eq(deploymentsTable.userId, usersTable.id))
+    .orderBy(desc(deploymentsTable.createdAt));
+  res.json(rows.map(r => ({
+    id: r.deployment.id, userId: r.deployment.userId, templateId: r.deployment.templateId,
+    templateName: r.templateName ?? "Unknown", username: r.username ?? "Unknown",
+    botName: r.deployment.botName, herokuAppId: r.deployment.herokuAppId ?? null,
+    status: r.deployment.status, createdAt: r.deployment.createdAt, updatedAt: r.deployment.updatedAt,
+  })));
+});
+
+// â”€â”€ Suspend bot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.post("/admin/deployments/:id/suspend", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [dep] = await db.select().from(deploymentsTable).where(eq(deploymentsTable.id, id));
+  if (!dep) { res.status(404).json({ error: "Not found" }); return; }
+
+  if (dep.herokuAppId && HEROKU_API_KEY) {
+    await fetch(`${HEROKU_BASE}/apps/${dep.herokuAppId}/formation`, {
+      method: "PATCH", headers: herokuHeaders(),
+      body: JSON.stringify({ updates: [{ type: "worker", quantity: 0 }] }),
+    }).catch(() => {});
+  }
+
+  const logs = (dep.logs as string[]) ?? [];
+  const [updated] = await db.update(deploymentsTable)
+    .set({ status: "suspended", logs: [...logs, `[${new Date().toISOString()}] Suspended by admin`] })
+    .where(eq(deploymentsTable.id, id)).returning();
+  res.json({ id: updated.id, status: updated.status, botName: updated.botName });
+});
+
+// â”€â”€ Admin delete bot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.delete("/admin/deployments/:id", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [dep] = await db.select().from(deploymentsTable).where(eq(deploymentsTable.id, id));
+  if (!dep) { res.status(404).json({ error: "Not found" }); return; }
+
+  if (dep.herokuAppId && HEROKU_API_KEY) {
+    await fetch(`${HEROKU_BASE}/apps/${dep.herokuAppId}`, {
+      method: "DELETE", headers: herokuHeaders(),
+    }).catch(() => {});
+  }
+
+  await db.delete(deploymentsTable).where(eq(deploymentsTable.id, id));
+  res.sendStatus(204);
+});
+
+// â”€â”€ Admin view bot logs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.get("/admin/deployments/:id/logs", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [dep] = await db.select().from(deploymentsTable).where(eq(deploymentsTable.id, id));
+  if (!dep) { res.status(404).json({ error: "Not found" }); return; }
+
+  let lines = (dep.logs as string[]) ?? [];
+
+  // Fetch live Heroku logs too
+  if (dep.herokuAppId && HEROKU_API_KEY) {
+    try {
+      const sessionRes = await fetch(`${HEROKU_BASE}/apps/${dep.herokuAppId}/log-sessions`, {
+        method: "POST", headers: herokuHeaders(),
+        body: JSON.stringify({ lines: 100, tail: false }),
+      });
+      if (sessionRes.ok) {
+        const sessionData = await sessionRes.json() as any;
+        const logsRes = await fetch(sessionData.logplex_url);
+        const logsText = await logsRes.text();
+        const herokuLines = logsText.split("\n").filter(Boolean);
+        lines = [...lines, "", "-- Live Heroku Logs --", ...herokuLines];
+      }
+    } catch {}
+  }
+
+  res.json({ lines, status: dep.status, botName: dep.botName, herokuAppId: dep.herokuAppId });
+});
+
+// â”€â”€ Platform Health â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+router.get("/admin/health", requireAdmin, async (_req, res): Promise<void> => {
+  const deployments = await db.select().from(deploymentsTable);
+  const users = await db.select().from(usersTable);
+  const payments = await db.select().from(paymentsTable);
+  const walletTx = await db.select().from(walletTransactionsTable);
+
+  const onlineCount = deployments.filter(d => d.status === "online").length;
+  const offlineCount = deployments.filter(d => d.status === "offline").length;
+  const errorCount = deployments.filter(d => d.status === "error").length;
+  const buildingCount = deployments.filter(d => d.status === "building").length;
+  const suspendedCount = deployments.filter(d => d.status === "suspended").length;
+
+  const totalRevenue = payments.filter(p => p.status === "success").reduce((s, p) => s + p.amount, 0);
+  const pendingPayments = payments.filter(p => p.status === "pending").length;
+  const totalWalletBalance = users.reduce((s, u) => s + (u.walletBalance ?? 0), 0);
+
+  // Uptime rate
+  const uptimeRate = deployments.length > 0 ? Math.round((onlineCount / deployments.length) * 100) : 100;
+
+  // Heroku connectivity check
+  let herokuStatus = "not_configured";
+  if (HEROKU_API_KEY) {
+    try {
+      const r = await fetch(`${HEROKU_BASE}/account`, { headers: herokuHeaders() });
+      herokuStatus = r.ok ? "connected" : "error";
+    } catch { herokuStatus = "error"; }
+  }
+
+  res.json({
+    bots: { total: deployments.length, online: onlineCount, offline: offlineCount, error: errorCount, building: buildingCount, suspended: suspendedCount, uptimeRate },
+    users: { total: users.length, suspended: users.filter(u => u.suspended).length },
+    payments: { totalRevenue, pendingPayments, totalTransactions: payments.length, totalWalletBalance },
+    integrations: { heroku: herokuStatus, database: "connected" },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// â”€â”€ Edit template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.patch("/admin/templates/:id", requireAdmin, async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const { name, description, githubRepo, thumbnail, category, appJson, isFree, price, currency, pairSiteUrl } = req.body;
-
   const [template] = await db.update(templatesTable).set({
     ...(name !== undefined && { name }),
     ...(description !== undefined && { description }),
@@ -78,11 +241,11 @@ router.patch("/admin/templates/:id", requireAdmin, async (req, res): Promise<voi
     ...(currency !== undefined && { currency }),
     ...(pairSiteUrl !== undefined && { pairSiteUrl }),
   }).where(eq(templatesTable.id, id)).returning();
-
   if (!template) { res.status(404).json({ error: "Template not found" }); return; }
   res.json(formatTemplate(template));
 });
 
+// â”€â”€ Fetch app.json â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post("/admin/fetch-app-json", requireAdmin, async (req, res): Promise<void> => {
   const { repoUrl } = req.body;
   if (!repoUrl) { res.status(400).json({ error: "repoUrl is required" }); return; }
@@ -113,20 +276,14 @@ router.post("/admin/fetch-app-json", requireAdmin, async (req, res): Promise<voi
   }
 });
 
-router.post("/admin/deployments/:id/suspend", requireAdmin, async (req, res): Promise<void> => {
-  const id = parseInt(req.params.id as string, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const [row] = await db
-    .select({ deployment: deploymentsTable, templateName: templatesTable.name })
-    .from(deploymentsTable)
-    .leftJoin(templatesTable, eq(deploymentsTable.templateId, templatesTable.id))
-    .where(eq(deploymentsTable.id, id));
-  if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  const logs = (row.deployment.logs as string[]) ?? [];
-  const [updated] = await db.update(deploymentsTable)
-    .set({ status: "suspended", logs: [...logs, `[${new Date().toISOString()}] Suspended by admin`] })
-    .where(eq(deploymentsTable.id, id)).returning();
-  res.json({ id: updated.id, status: updated.status, botName: updated.botName, templateName: row.templateName ?? "Unknown" });
+router.get("/admin/payments", requireAdmin, async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({ payment: paymentsTable, templateName: templatesTable.name, username: usersTable.username, email: usersTable.email })
+    .from(paymentsTable)
+    .leftJoin(templatesTable, eq(paymentsTable.templateId, templatesTable.id))
+    .leftJoin(usersTable, eq(paymentsTable.userId, usersTable.id))
+    .orderBy(desc(paymentsTable.createdAt));
+  res.json(rows.map(r => ({ ...r.payment, templateName: r.templateName ?? "Unknown", username: r.username ?? "Unknown", email: r.email ?? "Unknown" })));
 });
 
 export default router;

@@ -9,85 +9,56 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  useGetAdminStats,
-  useListAdminUsers,
-  useListAdminDeployments,
-  useListTemplates,
-  useDeleteTemplate,
-  useSuspendDeployment,
-  getListTemplatesQueryKey,
-  getListAdminDeploymentsQueryKey,
-  getGetAdminStatsQueryKey,
+  useGetAdminStats, useListAdminUsers, useListAdminDeployments,
+  useListTemplates, useDeleteTemplate, useSuspendDeployment,
+  getListTemplatesQueryKey, getListAdminDeploymentsQueryKey,
+  getGetAdminStatsQueryKey, getListAdminUsersQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  Loader2,
-  Users,
-  Server,
-  LayoutTemplate,
-  Activity,
-  Ban,
-  Trash2,
-  Plus,
-  Github,
-  ExternalLink,
-  Bot,
-  ShieldCheck,
-  TrendingUp,
-  Zap,
-  Eye,
-  Globe,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  XCircle,
-  UserCircle2,
+  Loader2, Users, Server, LayoutTemplate, Activity, Ban, Trash2,
+  Plus, Github, ExternalLink, Bot, ShieldCheck, TrendingUp, Zap,
+  Eye, Globe, AlertCircle, CheckCircle2, Clock, XCircle, UserCircle2,
+  Pencil, Terminal, UserX, UserCheck, RefreshCw, Database,
+  Wifi, WifiOff, DollarSign,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { AdminTemplateEditModal } from "@/components/admin-template-edit-modal";
+
+const API_BASE = "http://localhost:8080";
+function authHeader() {
+  const token = localStorage.getItem("junex_token");
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+}
 
 function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { className: string; icon: React.ReactNode }> = {
-    online: { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20", icon: <CheckCircle2 className="h-3 w-3" /> },
-    offline: { className: "bg-slate-500/15 text-slate-400 border-slate-500/20", icon: <XCircle className="h-3 w-3" /> },
-    error: { className: "bg-red-500/15 text-red-500 border-red-500/20", icon: <AlertCircle className="h-3 w-3" /> },
-    building: { className: "bg-blue-500/15 text-blue-400 border-blue-500/20", icon: <Loader2 className="h-3 w-3 animate-spin" /> },
-    queued: { className: "bg-amber-500/15 text-amber-500 border-amber-500/20", icon: <Clock className="h-3 w-3" /> },
-    suspended: { className: "bg-red-500/15 text-red-400 border-red-500/20", icon: <Ban className="h-3 w-3" /> },
+  const config: Record<string, { cls: string; icon: React.ReactNode }> = {
+    online:    { cls: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20", icon: <CheckCircle2 className="h-3 w-3" /> },
+    offline:   { cls: "bg-slate-500/15 text-slate-400 border-slate-500/20", icon: <XCircle className="h-3 w-3" /> },
+    error:     { cls: "bg-red-500/15 text-red-500 border-red-500/20", icon: <AlertCircle className="h-3 w-3" /> },
+    building:  { cls: "bg-blue-500/15 text-blue-400 border-blue-500/20", icon: <Loader2 className="h-3 w-3 animate-spin" /> },
+    queued:    { cls: "bg-amber-500/15 text-amber-500 border-amber-500/20", icon: <Clock className="h-3 w-3" /> },
+    suspended: { cls: "bg-red-500/15 text-red-400 border-red-500/20", icon: <Ban className="h-3 w-3" /> },
   };
-  const { className, icon } = config[status] ?? config.offline;
+  const { cls, icon } = config[status] ?? config.offline;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${className}`}>
-      {icon}
-      {status}
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>
+      {icon} {status}
     </span>
   );
 }
 
-function StatCard({
-  title,
-  value,
-  icon: Icon,
-  gradient,
-  sub,
-}: {
-  title: string;
-  value: number | undefined;
-  icon: React.ElementType;
-  gradient: string;
-  sub?: string;
+function StatCard({ title, value, icon: Icon, gradient, sub }: {
+  title: string; value: number | undefined; icon: React.ElementType; gradient: string; sub?: string;
 }) {
   return (
     <Card className="relative overflow-hidden border-border/40">
@@ -108,10 +79,29 @@ function StatCard({
   );
 }
 
+function LogLine({ line }: { line: string }) {
+  if (!line || line.trim() === "") return <div className="h-1.5" />;
+  const isError = line.includes("ERROR") || line.includes("error");
+  const isSuccess = line.includes("successful") || line.includes("online") || line.includes("live");
+  const isDivider = line.startsWith("--");
+  return (
+    <div className={`font-mono text-xs leading-5 ${
+      isError ? "text-red-400" : isSuccess ? "text-emerald-400" : isDivider ? "text-slate-500 italic" : "text-slate-300"
+    }`}>{line}</div>
+  );
+}
+
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("templates");
+  const [editingTemplate, setEditingTemplate] = useState<any>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [logsBot, setLogsBot] = useState<{ id: number; name: string } | null>(null);
+  const [botLogs, setBotLogs] = useState<string[]>([]);
+  const [isLoadingBotLogs, setIsLoadingBotLogs] = useState(false);
+  const [health, setHealth] = useState<any>(null);
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false);
 
   const { data: stats } = useGetAdminStats();
   const { data: users, isLoading: isLoadingUsers } = useListAdminUsers();
@@ -121,7 +111,7 @@ export default function AdminDashboard() {
   const suspendMutation = useSuspendDeployment({
     mutation: {
       onSuccess: () => {
-        toast({ title: "Deployment suspended" });
+        toast({ title: "Bot suspended on Heroku" });
         queryClient.invalidateQueries({ queryKey: getListAdminDeploymentsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetAdminStatsQueryKey() });
       },
@@ -138,17 +128,87 @@ export default function AdminDashboard() {
     },
   });
 
+  async function handleSuspendUser(userId: number, username: string) {
+    const res = await fetch(`${API_BASE}/api/admin/users/${userId}/suspend`, { method: "POST", headers: authHeader() });
+    if (res.ok) {
+      toast({ title: `${username} suspended â€” all bots stopped` });
+      queryClient.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListAdminDeploymentsQueryKey() });
+    } else { toast({ title: "Failed to suspend user", variant: "destructive" }); }
+  }
+
+  async function handleUnsuspendUser(userId: number, username: string) {
+    const res = await fetch(`${API_BASE}/api/admin/users/${userId}/unsuspend`, { method: "POST", headers: authHeader() });
+    if (res.ok) {
+      toast({ title: `${username} unsuspended` });
+      queryClient.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+    } else { toast({ title: "Failed to unsuspend user", variant: "destructive" }); }
+  }
+
+  async function handleDeleteUser(userId: number) {
+    const res = await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: "DELETE", headers: authHeader() });
+    if (res.ok) {
+      toast({ title: "User deleted â€” all bots removed from Heroku" });
+      queryClient.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListAdminDeploymentsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetAdminStatsQueryKey() });
+    } else { toast({ title: "Failed to delete user", variant: "destructive" }); }
+  }
+
+  async function handleDeleteBot(depId: number) {
+    const res = await fetch(`${API_BASE}/api/admin/deployments/${depId}`, { method: "DELETE", headers: authHeader() });
+    if (res.ok) {
+      toast({ title: "Bot deleted from Heroku" });
+      queryClient.invalidateQueries({ queryKey: getListAdminDeploymentsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetAdminStatsQueryKey() });
+    } else { toast({ title: "Failed to delete bot", variant: "destructive" }); }
+  }
+
+  async function handleViewBotLogs(depId: number, botName: string) {
+    setLogsBot({ id: depId, name: botName });
+    setBotLogs([]);
+    setIsLoadingBotLogs(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/deployments/${depId}/logs`, { headers: authHeader() });
+      const data = await res.json();
+      setBotLogs(data.lines ?? []);
+    } catch { setBotLogs(["Failed to fetch logs"]); }
+    finally { setIsLoadingBotLogs(false); }
+  }
+
+  async function loadHealth() {
+    setIsLoadingHealth(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/health`, { headers: authHeader() });
+      const data = await res.json();
+      setHealth(data);
+    } catch { toast({ title: "Failed to load health data", variant: "destructive" }); }
+    finally { setIsLoadingHealth(false); }
+  }
+
+  function handleTabChange(tab: string) {
+    setActiveTab(tab);
+    if (tab === "health" && !health) loadHealth();
+  }
+
   const onlineRate = stats
-    ? stats.totalDeployments > 0
-      ? Math.round((stats.onlineDeployments / stats.totalDeployments) * 100)
-      : 0
+    ? stats.totalDeployments > 0 ? Math.round((stats.onlineDeployments / stats.totalDeployments) * 100) : 100
     : null;
+
+  const quickActions = [
+    { label: "Add Template", icon: Plus, href: "/admin/templates/new", color: "text-primary" },
+    { label: "View Deployments", icon: Eye, action: () => handleTabChange("deployments"), color: "text-blue-500" },
+    { label: "Manage Users", icon: Users, action: () => handleTabChange("users"), color: "text-emerald-500" },
+    { label: "Manage Team", icon: UserCircle2, href: "/admin/developers", color: "text-purple-400" },
+    { label: "Platform Health", icon: Zap, action: () => handleTabChange("health"), color: "text-amber-500" },
+  ];
 
   return (
     <ProtectedRoute adminOnly>
       <Layout>
         <div className="min-h-screen bg-background">
           <div className="container px-4 md:px-8 py-8 mx-auto max-w-7xl space-y-8">
+
             {/* Header */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
@@ -157,58 +217,29 @@ export default function AdminDashboard() {
                   <span className="text-xs font-semibold uppercase tracking-widest text-primary">Admin Control Center</span>
                 </div>
                 <h1 className="text-3xl font-bold tracking-tight">Platform Overview</h1>
-                <p className="text-muted-foreground mt-1">
-                  Manage templates, monitor deployments, and oversee users.
-                </p>
+                <p className="text-muted-foreground mt-1">Manage templates, monitor deployments, and oversee users.</p>
               </div>
               <Button asChild className="gap-2 shadow-lg shadow-primary/20">
-                <Link href="/admin/templates/new">
-                  <Plus className="h-4 w-4" /> Add Template
-                </Link>
+                <Link href="/admin/templates/new"><Plus className="h-4 w-4" /> Add Template</Link>
               </Button>
             </div>
 
-            {/* Stats Grid */}
+            {/* Stats */}
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <StatCard
-                title="Registered Users"
-                value={stats?.totalUsers}
-                icon={Users}
-                gradient="bg-gradient-to-br from-violet-600 to-purple-800"
-                sub="Total accounts on platform"
-              />
-              <StatCard
-                title="Total Deployments"
-                value={stats?.totalDeployments}
-                icon={Server}
-                gradient="bg-gradient-to-br from-blue-600 to-indigo-800"
-                sub="All-time deployments"
-              />
-              <StatCard
-                title="Live Right Now"
-                value={stats?.onlineDeployments}
-                icon={Activity}
+              <StatCard title="Registered Users" value={stats?.totalUsers} icon={Users}
+                gradient="bg-gradient-to-br from-violet-600 to-purple-800" sub="Total accounts" />
+              <StatCard title="Total Deployments" value={stats?.totalDeployments} icon={Server}
+                gradient="bg-gradient-to-br from-blue-600 to-indigo-800" sub="All-time deployments" />
+              <StatCard title="Live Right Now" value={stats?.onlineDeployments} icon={Activity}
                 gradient="bg-gradient-to-br from-emerald-600 to-teal-800"
-                sub={onlineRate !== null ? `${onlineRate}% uptime rate` : undefined}
-              />
-              <StatCard
-                title="Bot Templates"
-                value={stats?.totalTemplates}
-                icon={LayoutTemplate}
-                gradient="bg-gradient-to-br from-amber-600 to-orange-800"
-                sub="Available in gallery"
-              />
+                sub={onlineRate !== null ? `${onlineRate}% uptime rate` : undefined} />
+              <StatCard title="Bot Templates" value={stats?.totalTemplates} icon={LayoutTemplate}
+                gradient="bg-gradient-to-br from-amber-600 to-orange-800" sub="Available in gallery" />
             </div>
 
-            {/* Quick Action Strip */}
+            {/* Quick Actions */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {[
-                { label: "Add Template", icon: Plus, href: "/admin/templates/new", color: "text-primary" },
-                { label: "View Deployments", icon: Eye, action: () => setActiveTab("deployments"), color: "text-blue-500" },
-                { label: "Manage Users", icon: Users, action: () => setActiveTab("users"), color: "text-emerald-500" },
-                { label: "Platform Health", icon: Zap, action: () => {}, color: "text-amber-500" },
-                { label: "Manage Team", icon: UserCircle2, href: "/admin/developers", color: "text-purple-400" },
-              ].map((item) => (
+              {quickActions.map((item) => (
                 item.href ? (
                   <Link key={item.label} href={item.href}>
                     <Card className="cursor-pointer hover:border-primary/40 transition-colors group border-border/40">
@@ -219,11 +250,8 @@ export default function AdminDashboard() {
                     </Card>
                   </Link>
                 ) : (
-                  <Card
-                    key={item.label}
-                    className="cursor-pointer hover:border-primary/40 transition-colors group border-border/40"
-                    onClick={item.action}
-                  >
+                  <Card key={item.label} className="cursor-pointer hover:border-primary/40 transition-colors group border-border/40"
+                    onClick={(item as any).action}>
                     <CardContent className="flex items-center gap-3 py-3 px-4">
                       <item.icon className={`h-4 w-4 ${item.color} group-hover:scale-110 transition-transform`} />
                       <span className="text-sm font-medium">{item.label}</span>
@@ -233,41 +261,30 @@ export default function AdminDashboard() {
               ))}
             </div>
 
-            {/* Main Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
+            {/* Tabs */}
+            <Tabs value={activeTab} onValueChange={handleTabChange}>
               <TabsList className="bg-muted/50 p-1">
                 <TabsTrigger value="templates" className="gap-2">
                   <LayoutTemplate className="h-3.5 w-3.5" /> Templates
-                  {templates && (
-                    <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">
-                      {templates.length}
-                    </Badge>
-                  )}
+                  {templates && <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">{templates.length}</Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="deployments" className="gap-2">
-                  <Server className="h-3.5 w-3.5" /> Deployments
-                  {deployments && (
-                    <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">
-                      {deployments.length}
-                    </Badge>
-                  )}
+                  <Server className="h-3.5 w-3.5" /> Bots
+                  {deployments && <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">{deployments.length}</Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="users" className="gap-2">
                   <Users className="h-3.5 w-3.5" /> Users
-                  {users && (
-                    <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">
-                      {users.length}
-                    </Badge>
-                  )}
+                  {users && <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">{users.length}</Badge>}
+                </TabsTrigger>
+                <TabsTrigger value="health" className="gap-2">
+                  <Activity className="h-3.5 w-3.5" /> Health
                 </TabsTrigger>
               </TabsList>
 
-              {/* Templates Tab */}
+              {/* â”€â”€ Templates Tab â”€â”€ */}
               <TabsContent value="templates" className="mt-6">
                 {isLoadingTemplates ? (
-                  <div className="flex h-40 items-center justify-center">
-                    <Loader2 className="h-7 w-7 animate-spin text-primary" />
-                  </div>
+                  <div className="flex h-40 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>
                 ) : templates && templates.length > 0 ? (
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {templates.map((t) => {
@@ -276,110 +293,73 @@ export default function AdminDashboard() {
                       const envCount = Object.keys(appJson?.env ?? {}).length;
                       const deployCount = deployments?.filter((d) => d.templateId === t.id).length ?? 0;
                       return (
-                        <Card
-                          key={t.id}
-                          data-testid={`template-card-${t.id}`}
-                          className="group relative flex flex-col overflow-hidden border-border/40 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all"
-                        >
-                          {/* Logo strip */}
+                        <Card key={t.id} className="group flex flex-col overflow-hidden border-border/40 hover:border-primary/40 hover:shadow-lg transition-all">
                           <div className="relative h-24 bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center">
                             {logo ? (
-                              <img
-                                src={logo}
-                                alt={t.name}
-                                className="h-16 w-16 rounded-xl object-cover shadow-md"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).style.display = "none";
-                                }}
-                              />
+                              <img src={logo} alt={t.name} className="h-16 w-16 rounded-xl object-cover shadow-md"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                             ) : (
                               <div className="h-16 w-16 rounded-xl bg-primary/10 flex items-center justify-center">
                                 <Bot className="h-8 w-8 text-primary/60" />
                               </div>
                             )}
-                            <Badge
-                              variant="outline"
-                              className="absolute top-2 right-2 text-[10px] bg-background/80 backdrop-blur-sm"
-                            >
+                            <Badge variant="outline" className="absolute top-2 right-2 text-[10px] bg-background/80 backdrop-blur-sm">
                               {t.category}
                             </Badge>
                           </div>
-
                           <CardHeader className="pb-2">
                             <CardTitle className="text-base">{t.name}</CardTitle>
                             <CardDescription className="text-xs line-clamp-2">{t.description}</CardDescription>
                           </CardHeader>
-
                           <CardContent className="flex-1 pb-3">
                             <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <Server className="h-3 w-3" /> {deployCount} deploys
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Zap className="h-3 w-3" /> {envCount} env vars
-                              </span>
+                              <span className="flex items-center gap-1"><Server className="h-3 w-3" /> {deployCount} deploys</span>
+                              <span className="flex items-center gap-1"><Zap className="h-3 w-3" /> {envCount} env vars</span>
                             </div>
-                            <a
-                              href={t.githubRepo}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground truncate transition-colors"
-                            >
+                            <a href={t.githubRepo} target="_blank" rel="noopener noreferrer"
+                              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground truncate transition-colors">
                               <Github className="h-3 w-3 flex-shrink-0" />
                               <span className="truncate">{t.githubRepo.replace("https://github.com/", "")}</span>
                               <ExternalLink className="h-2.5 w-2.5 flex-shrink-0" />
                             </a>
                           </CardContent>
-
                           <Separator />
-
                           <div className="flex items-center justify-between px-4 py-2">
-                            <span className="text-xs text-muted-foreground">
-                              {format(new Date(t.createdAt), "MMM d, yyyy")}
-                            </span>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-destructive hover:text-destructive h-7 px-2"
-                                  data-testid={`delete-template-${t.id}`}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete Template</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This will permanently delete <strong>{t.name}</strong> and cannot be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => deleteTemplateMutation.mutate({ id: t.id })}
-                                    className="bg-destructive hover:bg-destructive/90"
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                            <span className="text-xs text-muted-foreground">{format(new Date(t.createdAt), "MMM d, yyyy")}</span>
+                            <div className="flex items-center gap-1">
+                              <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10 h-7 w-7 p-0"
+                                onClick={() => { setEditingTemplate(t); setShowEditModal(true); }} title="Edit template">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive h-7 w-7 p-0">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Template</AlertDialogTitle>
+                                    <AlertDialogDescription>Permanently deletes <strong>{t.name}</strong>.</AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => deleteTemplateMutation.mutate({ id: t.id })}
+                                      className="bg-destructive hover:bg-destructive/90">Delete</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
                           </div>
                         </Card>
                       );
                     })}
-
-                    {/* Add new card */}
                     <Link href="/admin/templates/new">
                       <Card className="h-full min-h-[220px] flex flex-col items-center justify-center border-dashed border-border/60 hover:border-primary/60 hover:bg-primary/5 cursor-pointer transition-all group">
                         <div className="p-4 rounded-full bg-primary/10 mb-3 group-hover:bg-primary/20 transition-colors">
                           <Plus className="h-6 w-6 text-primary" />
                         </div>
-                        <p className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-                          Add New Template
-                        </p>
+                        <p className="text-sm font-medium text-muted-foreground group-hover:text-foreground">Add New Template</p>
                         <p className="text-xs text-muted-foreground mt-1">Auto-fetch from GitHub</p>
                       </Card>
                     </Link>
@@ -388,23 +368,19 @@ export default function AdminDashboard() {
                   <div className="flex flex-col items-center justify-center h-40 gap-3">
                     <LayoutTemplate className="h-10 w-10 text-muted-foreground/40" />
                     <p className="text-muted-foreground text-sm">No templates yet.</p>
-                    <Button asChild size="sm">
-                      <Link href="/admin/templates/new">
-                        <Plus className="h-4 w-4 mr-2" /> Add First Template
-                      </Link>
-                    </Button>
+                    <Button asChild size="sm"><Link href="/admin/templates/new"><Plus className="h-4 w-4 mr-2" /> Add First Template</Link></Button>
                   </div>
                 )}
               </TabsContent>
 
-              {/* Deployments Tab */}
+              {/* â”€â”€ Bots Tab â”€â”€ */}
               <TabsContent value="deployments" className="mt-6">
                 <Card className="border-border/40">
                   <CardHeader className="pb-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle>All Deployments</CardTitle>
-                        <CardDescription>Monitor and manage every instance on the platform.</CardDescription>
+                        <CardTitle>All Deployed Bots</CardTitle>
+                        <CardDescription>Monitor, suspend, delete and view logs of every bot.</CardDescription>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Globe className="h-4 w-4 text-emerald-500" />
@@ -414,16 +390,14 @@ export default function AdminDashboard() {
                   </CardHeader>
                   <CardContent className="p-0">
                     {isLoadingDeployments ? (
-                      <div className="flex h-40 items-center justify-center">
-                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      </div>
+                      <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                     ) : (
                       <Table>
                         <TableHeader>
                           <TableRow className="hover:bg-transparent border-border/40">
                             <TableHead className="pl-6">Bot</TableHead>
+                            <TableHead>Owner</TableHead>
                             <TableHead>Template</TableHead>
-                            <TableHead>User ID</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Heroku App</TableHead>
                             <TableHead>Deployed</TableHead>
@@ -432,77 +406,62 @@ export default function AdminDashboard() {
                         </TableHeader>
                         <TableBody>
                           {deployments?.map((dep) => (
-                            <TableRow
-                              key={dep.id}
-                              data-testid={`deployment-row-${dep.id}`}
-                              className="border-border/40 hover:bg-muted/30"
-                            >
+                            <TableRow key={dep.id} className="border-border/40 hover:bg-muted/30">
                               <TableCell className="pl-6">
-                                <div className="font-medium">{dep.botName}</div>
+                                <div className="font-medium text-sm">{dep.botName}</div>
                                 <div className="text-xs text-muted-foreground font-mono">#{dep.id}</div>
                               </TableCell>
                               <TableCell>
-                                <Badge variant="outline" className="text-xs">{dep.templateName}</Badge>
+                                <span className="text-xs text-muted-foreground">{(dep as any).username ?? `uid:${dep.userId}`}</span>
                               </TableCell>
+                              <TableCell><Badge variant="outline" className="text-xs">{dep.templateName}</Badge></TableCell>
+                              <TableCell><StatusBadge status={dep.status} /></TableCell>
                               <TableCell>
-                                <span className="font-mono text-xs text-muted-foreground">uid:{dep.userId}</span>
+                                <span className="font-mono text-xs text-muted-foreground truncate max-w-[100px] block">{dep.herokuAppId ?? "-"}</span>
                               </TableCell>
-                              <TableCell>
-                                <StatusBadge status={dep.status} />
-                              </TableCell>
-                              <TableCell>
-                                <span className="font-mono text-xs text-muted-foreground truncate max-w-[120px] block">
-                                  {dep.herokuAppId ?? "—"}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground text-sm">
-                                {format(new Date(dep.createdAt), "MMM d, yyyy")}
-                              </TableCell>
+                              <TableCell className="text-muted-foreground text-sm">{format(new Date(dep.createdAt), "MMM d, yyyy")}</TableCell>
                               <TableCell className="text-right pr-6">
-                                {dep.status !== "suspended" && (
+                                <div className="flex items-center justify-end gap-1">
+                                  {/* View Logs */}
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-primary hover:bg-primary/10"
+                                    onClick={() => handleViewBotLogs(dep.id, dep.botName)} title="View logs">
+                                    <Terminal className="h-3.5 w-3.5" />
+                                  </Button>
+                                  {/* Suspend */}
+                                  {dep.status !== "suspended" && (
+                                    <Button variant="ghost" size="sm" className="h-7 px-2 text-amber-500 hover:bg-amber-500/10 text-xs"
+                                      disabled={suspendMutation.isPending}
+                                      onClick={() => suspendMutation.mutate({ id: dep.id })}>
+                                      <Ban className="h-3.5 w-3.5 mr-1" /> Suspend
+                                    </Button>
+                                  )}
+                                  {/* Delete */}
                                   <AlertDialog>
                                     <AlertDialogTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="text-destructive hover:text-destructive"
-                                        data-testid={`suspend-deployment-${dep.id}`}
-                                        disabled={suspendMutation.isPending}
-                                      >
-                                        <Ban className="h-3.5 w-3.5 mr-1.5" /> Suspend
+                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10">
+                                        <Trash2 className="h-3.5 w-3.5" />
                                       </Button>
                                     </AlertDialogTrigger>
                                     <AlertDialogContent>
                                       <AlertDialogHeader>
-                                        <AlertDialogTitle>Suspend Deployment</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          This will suspend <strong>{dep.botName}</strong>. The user will not be able to
-                                          restart it.
-                                        </AlertDialogDescription>
+                                        <AlertDialogTitle>Delete {dep.botName}?</AlertDialogTitle>
+                                        <AlertDialogDescription>Permanently deletes the bot and removes it from Heroku.</AlertDialogDescription>
                                       </AlertDialogHeader>
                                       <AlertDialogFooter>
                                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction
-                                          onClick={() => suspendMutation.mutate({ id: dep.id })}
-                                          className="bg-destructive hover:bg-destructive/90"
-                                        >
-                                          Suspend
-                                        </AlertDialogAction>
+                                        <AlertDialogAction className="bg-destructive text-destructive-foreground"
+                                          onClick={() => handleDeleteBot(dep.id)}>Delete</AlertDialogAction>
                                       </AlertDialogFooter>
                                     </AlertDialogContent>
                                   </AlertDialog>
-                                )}
-                                {dep.status === "suspended" && (
-                                  <Badge variant="outline" className="text-xs text-muted-foreground">Suspended</Badge>
-                                )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))}
                           {(!deployments || deployments.length === 0) && (
                             <TableRow>
                               <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                                <Server className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                                No deployments yet.
+                                <Server className="h-8 w-8 mx-auto mb-2 opacity-30" />No deployments yet.
                               </TableCell>
                             </TableRow>
                           )}
@@ -513,18 +472,16 @@ export default function AdminDashboard() {
                 </Card>
               </TabsContent>
 
-              {/* Users Tab */}
+              {/* â”€â”€ Users Tab â”€â”€ */}
               <TabsContent value="users" className="mt-6">
                 <Card className="border-border/40">
                   <CardHeader className="pb-4">
                     <CardTitle>Registered Users</CardTitle>
-                    <CardDescription>All accounts on the JuneXDeployment platform.</CardDescription>
+                    <CardDescription>Suspend, unsuspend or delete user accounts.</CardDescription>
                   </CardHeader>
                   <CardContent className="p-0">
                     {isLoadingUsers ? (
-                      <div className="flex h-40 items-center justify-center">
-                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      </div>
+                      <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                     ) : (
                       <Table>
                         <TableHeader>
@@ -532,25 +489,24 @@ export default function AdminDashboard() {
                             <TableHead className="pl-6">User</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Role</TableHead>
-                            <TableHead>Deployments</TableHead>
-                            <TableHead className="pr-6">Joined</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Bots</TableHead>
+                            <TableHead>Joined</TableHead>
+                            <TableHead className="text-right pr-6">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {users?.map((u, idx) => {
+                          {users?.map((u: any) => {
                             const userDeployCount = deployments?.filter((d) => d.userId === u.id).length ?? 0;
-                            const initials = u.username.slice(0, 2).toUpperCase();
+                            const isSuspended = u.suspended ?? false;
+                            const isAdmin = u.role === "admin";
                             return (
-                              <TableRow
-                                key={u.id}
-                                data-testid={`user-row-${u.id}`}
-                                className="border-border/40 hover:bg-muted/30"
-                              >
+                              <TableRow key={u.id} className={`border-border/40 hover:bg-muted/30 ${isSuspended ? "opacity-60" : ""}`}>
                                 <TableCell className="pl-6">
                                   <div className="flex items-center gap-3">
                                     <Avatar className="h-8 w-8">
-                                      <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-                                        {initials}
+                                      <AvatarFallback className={`text-xs font-bold ${isSuspended ? "bg-red-500/20 text-red-400" : "bg-primary/10 text-primary"}`}>
+                                        {u.username.slice(0, 2).toUpperCase()}
                                       </AvatarFallback>
                                     </Avatar>
                                     <div>
@@ -561,13 +517,18 @@ export default function AdminDashboard() {
                                 </TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
                                 <TableCell>
-                                  <Badge
-                                    variant={u.role === "admin" ? "default" : "outline"}
-                                    className={u.role === "admin" ? "bg-primary/20 text-primary border-primary/30 hover:bg-primary/20" : ""}
-                                  >
-                                    {u.role === "admin" && <ShieldCheck className="h-3 w-3 mr-1" />}
+                                  <Badge variant={isAdmin ? "default" : "outline"}
+                                    className={isAdmin ? "bg-primary/20 text-primary border-primary/30 hover:bg-primary/20" : ""}>
+                                    {isAdmin && <ShieldCheck className="h-3 w-3 mr-1" />}
                                     {u.role}
                                   </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  {isSuspended ? (
+                                    <Badge className="bg-red-500/15 text-red-400 border-red-500/20 text-xs">Suspended</Badge>
+                                  ) : (
+                                    <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/20 text-xs">Active</Badge>
+                                  )}
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-1 text-sm">
@@ -575,17 +536,53 @@ export default function AdminDashboard() {
                                     <span>{userDeployCount}</span>
                                   </div>
                                 </TableCell>
-                                <TableCell className="text-sm text-muted-foreground pr-6">
-                                  {format(new Date(u.createdAt), "MMM d, yyyy")}
+                                <TableCell className="text-sm text-muted-foreground">{format(new Date(u.createdAt), "MMM d, yyyy")}</TableCell>
+                                <TableCell className="text-right pr-6">
+                                  {!isAdmin && (
+                                    <div className="flex items-center justify-end gap-1">
+                                      {/* Suspend / Unsuspend */}
+                                      {isSuspended ? (
+                                        <Button variant="ghost" size="sm" className="h-7 px-2 text-emerald-500 hover:bg-emerald-500/10 text-xs gap-1"
+                                          onClick={() => handleUnsuspendUser(u.id, u.username)}>
+                                          <UserCheck className="h-3.5 w-3.5" /> Unsuspend
+                                        </Button>
+                                      ) : (
+                                        <Button variant="ghost" size="sm" className="h-7 px-2 text-amber-500 hover:bg-amber-500/10 text-xs gap-1"
+                                          onClick={() => handleSuspendUser(u.id, u.username)}>
+                                          <UserX className="h-3.5 w-3.5" /> Suspend
+                                        </Button>
+                                      )}
+                                      {/* Delete */}
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10">
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Delete {u.username}?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              This permanently deletes the account and all their bots from Heroku. Cannot be undone.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction className="bg-destructive text-destructive-foreground"
+                                              onClick={() => handleDeleteUser(u.id)}>Delete Account</AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             );
                           })}
                           {(!users || users.length === 0) && (
                             <TableRow>
-                              <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                                <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                                No users registered yet.
+                              <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                                <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />No users registered yet.
                               </TableCell>
                             </TableRow>
                           )}
@@ -595,9 +592,195 @@ export default function AdminDashboard() {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              {/* â”€â”€ Platform Health Tab â”€â”€ */}
+              <TabsContent value="health" className="mt-6">
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Platform Health</h2>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={loadHealth} disabled={isLoadingHealth}>
+                      <RefreshCw className={`h-4 w-4 ${isLoadingHealth ? "animate-spin" : ""}`} />
+                      Refresh
+                    </Button>
+                  </div>
+
+                  {isLoadingHealth ? (
+                    <div className="flex h-40 items-center justify-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : !health ? (
+                    <div className="flex flex-col items-center justify-center h-40 gap-3 border border-dashed rounded-xl border-border/60">
+                      <Activity className="h-10 w-10 text-muted-foreground/30" />
+                      <p className="text-muted-foreground text-sm">Click Refresh to load platform health data</p>
+                      <Button size="sm" onClick={loadHealth}>Load Health Data</Button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Integration Status */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Card className="border-border/40">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                              <Database className="h-4 w-4" /> Database
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="flex items-center gap-2">
+                              <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span className="font-semibold text-emerald-400">Connected</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">Neon PostgreSQL</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="border-border/40">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                              <Server className="h-4 w-4" /> Heroku
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="flex items-center gap-2">
+                              {health.integrations.heroku === "connected" ? (
+                                <>
+                                  <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="font-semibold text-emerald-400">Connected</span>
+                                </>
+                              ) : health.integrations.heroku === "not_configured" ? (
+                                <>
+                                  <div className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                                  <span className="font-semibold text-amber-400">Not Configured</span>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="h-2.5 w-2.5 rounded-full bg-red-400" />
+                                  <span className="font-semibold text-red-400">Error</span>
+                                </>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {health.integrations.heroku === "not_configured" ? "Set HEROKU_API_KEY in .env" : "Heroku API"}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      {/* Bot Stats */}
+                      <Card className="border-border/40">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            <Bot className="h-4 w-4 text-primary" /> Bot Statistics
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            {[
+                              { label: "Total", value: health.bots.total, color: "text-foreground" },
+                              { label: "Online", value: health.bots.online, color: "text-emerald-400" },
+                              { label: "Offline", value: health.bots.offline, color: "text-slate-400" },
+                              { label: "Error", value: health.bots.error, color: "text-red-400" },
+                              { label: "Suspended", value: health.bots.suspended, color: "text-amber-400" },
+                            ].map(({ label, value, color }) => (
+                              <div key={label} className="text-center p-3 rounded-xl bg-muted/30 border border-border/40">
+                                <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{label}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-4 p-3 rounded-xl bg-primary/5 border border-primary/20">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium">Platform Uptime Rate</span>
+                              <span className={`font-bold text-lg ${health.bots.uptimeRate >= 80 ? "text-emerald-400" : health.bots.uptimeRate >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                                {health.bots.uptimeRate}%
+                              </span>
+                            </div>
+                            <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${health.bots.uptimeRate >= 80 ? "bg-emerald-500" : health.bots.uptimeRate >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                                style={{ width: `${health.bots.uptimeRate}%` }} />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Revenue */}
+                      <Card className="border-border/40">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            <DollarSign className="h-4 w-4 text-primary" /> Revenue & Payments
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            <div className="p-4 rounded-xl bg-muted/30 border border-border/40">
+                              <p className="text-2xl font-bold text-primary">
+                                KES {((health.payments.totalRevenue ?? 0) / 100).toLocaleString()}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">Total Revenue</p>
+                            </div>
+                            <div className="p-4 rounded-xl bg-muted/30 border border-border/40">
+                              <p className="text-2xl font-bold">
+                                KES {((health.payments.totalWalletBalance ?? 0) / 100).toLocaleString()}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">Total Wallet Balance</p>
+                            </div>
+                            <div className="p-4 rounded-xl bg-muted/30 border border-border/40">
+                              <p className="text-2xl font-bold text-amber-400">{health.payments.pendingPayments}</p>
+                              <p className="text-xs text-muted-foreground mt-1">Pending Payments</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <p className="text-xs text-muted-foreground text-right">
+                        Last updated: {new Date(health.timestamp).toLocaleString()}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </TabsContent>
             </Tabs>
           </div>
         </div>
+
+        {/* Template Edit Modal */}
+        <AdminTemplateEditModal
+          template={editingTemplate}
+          open={showEditModal}
+          onOpenChange={setShowEditModal}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: getListTemplatesQueryKey() })}
+        />
+
+        {/* Bot Logs Modal */}
+        <Dialog open={!!logsBot} onOpenChange={(v) => { if (!v) setLogsBot(null); }}>
+          <DialogContent className="sm:max-w-2xl max-h-[80vh]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Terminal className="h-5 w-5 text-primary" />
+                Logs: {logsBot?.name}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="bg-[#060a10] rounded-xl h-[50vh] overflow-hidden">
+              <ScrollArea className="h-full">
+                <div className="p-4 space-y-0">
+                  {isLoadingBotLogs ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-xs font-mono">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Loading logs...
+                    </div>
+                  ) : botLogs.length === 0 ? (
+                    <p className="text-slate-500 text-xs font-mono">No logs available.</p>
+                  ) : (
+                    botLogs.map((line, i) => <LogLine key={i} line={line} />)
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" className="gap-2"
+                onClick={() => logsBot && handleViewBotLogs(logsBot.id, logsBot.name)}>
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </Layout>
     </ProtectedRoute>
   );
